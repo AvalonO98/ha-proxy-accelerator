@@ -44,18 +44,14 @@ options:
   hacs_patch_enabled: false
   hacs_github_proxy: "https://ghfast.top/"
 
-# schema 采用 Supervisor 经典简写(列表 = 下拉框), 兼容严格校验的新版 Supervisor
+# schema 采用类型描述字符串(bool/str/password/match(正则)); 枚举用 match 约束,
+# 兼容新版 Supervisor(Apps) 的严格校验 —— 不接受 dict 式 type/name 或裸列表下拉
 schema:
   enabled: bool
-  mode:
-    - direct
-    - http
-    - socks5
+  mode: "match(^(direct|http|socks5)$)"
   upstream: str
   upstream_user: str
   upstream_pass: password
-  acl_mode:
-    - whitelist
-    - global
+  acl_mode: "match(^(whitelist|global)$)"
   hacs_patch_enabled: bool
   hacs_github_proxy: str
