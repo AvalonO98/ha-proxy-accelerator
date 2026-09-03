@@ -1,4 +1,4 @@
-name: Build & push add-on image (ghcr)
+name: Build & push app image (ghcr multi-arch)
 
 on:
   push:
@@ -15,24 +15,11 @@ permissions:
 
 env:
   IMAGE: ghcr.io/avalono98/ha-proxy-accelerator
-  VERSION: 0.3.0
+  VERSION: "0.3.0"
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: amd64
-            platform: linux/amd64
-            base: ghcr.io/home-assistant/amd64-base:latest
-          - arch: aarch64
-            platform: linux/arm64
-            base: ghcr.io/home-assistant/aarch64-base:latest
-          - arch: armv7
-            platform: linux/arm/v7
-            base: ghcr.io/home-assistant/armv7-base:latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -50,17 +37,17 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push ${{ matrix.arch }}
+      - name: Build and push
         uses: docker/build-push-action@v6
         with:
           context: proxy-accelerator
           file: proxy-accelerator/Dockerfile
-          platforms: ${{ matrix.platform }}
+          platforms: linux/amd64
           push: true
+          # 通用引用: Supervisor 按 <image>:<version> 拉取
           tags: |
-            ghcr.io/avalono98/ha-proxy-accelerator/${{ matrix.arch }}:${{ env.VERSION }}
-            ghcr.io/avalono98/ha-proxy-accelerator/${{ matrix.arch }}:latest
+            ghcr.io/avalono98/ha-proxy-accelerator:${{ env.VERSION }}
+            ghcr.io/avalono98/ha-proxy-accelerator:latest
           build-args: |
-            BUILD_FROM=${{ matrix.base }}
+            BUILD_FROM=ghcr.io/home-assistant/amd64-base:latest
             BUILD_VERSION=${{ env.VERSION }}
-            BUILD_ARCH=${{ matrix.arch }}

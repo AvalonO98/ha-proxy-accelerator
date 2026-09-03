@@ -4,16 +4,14 @@ description: >
   代理 + 加速一体面板：① 自选上游(HTTP/SOCKS5)的可开关正向代理入口；
   ② Docker Hub / GHCR / GitHub 镜像加速：内置常用加速镜像与可达性检测，
      一键生成宿主侧配置向导；③ HACS 官方组件更新加速(可开关补丁，备份可回滚)。
-version: 0.3.0
+version: "0.3.0"
 url: https://github.com/AvalonO98/ha-proxy-accelerator
-# 预构建镜像: 由 .github/workflows/build.yml 推送到 ghcr; 商店直接拉镜像, 不本机构建
-# 注意: Docker 镜像仓库名必须小写, 账号 AvalonO98 全小写为 avalono98
-image: ghcr.io/avalono98/ha-proxy-accelerator/{arch}
+# 预构建镜像: 由 .github/workflows/build.yml 构建多架构清单推送到 ghcr
+# 通用引用名(不带 tag): Supervisor 用 version 作为 tag 拉取, 故 tag 必须与 version 一致
+image: "ghcr.io/avalono98/ha-proxy-accelerator"
+# 当前发布 amd64 镜像(你的 ESXi 环境); 其它架构可后续用官方 builder action 扩展
 arch:
-  - aarch64
   - amd64
-  - armv7
-  - i386
 startup: application
 boot: auto
 init: false
