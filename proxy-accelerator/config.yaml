@@ -4,7 +4,7 @@ description: >
   代理 + 加速一体面板：① 自选上游(HTTP/SOCKS5)的可开关正向代理入口；
   ② Docker Hub / GHCR / GitHub 镜像加速：内置常用加速镜像与可达性检测，
      一键生成宿主侧配置向导；③ HACS 官方组件更新加速(可开关补丁，备份可回滚)。
-version: "0.3.1"
+version: "0.3.2"
 url: https://github.com/AvalonO98/ha-proxy-accelerator
 # 预构建镜像: 由 .github/workflows/build.yml 构建多架构清单推送到 ghcr
 # 通用引用名(不带 tag): Supervisor 用 version 作为 tag 拉取, 故 tag 必须与 version 一致
