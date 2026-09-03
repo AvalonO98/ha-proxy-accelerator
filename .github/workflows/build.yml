@@ -14,7 +14,7 @@ permissions:
   packages: write
 
 env:
-  IMAGE: ghcr.io/avalonO98/ha-proxy-accelerator
+  IMAGE: ghcr.io/avalono98/ha-proxy-accelerator
   VERSION: 0.3.0
 
 jobs:
@@ -58,8 +58,8 @@ jobs:
           platforms: ${{ matrix.platform }}
           push: true
           tags: |
-            ghcr.io/avalonO98/ha-proxy-accelerator/${{ matrix.arch }}:${{ env.VERSION }}
-            ghcr.io/avalonO98/ha-proxy-accelerator/${{ matrix.arch }}:latest
+            ghcr.io/avalono98/ha-proxy-accelerator/${{ matrix.arch }}:${{ env.VERSION }}
+            ghcr.io/avalono98/ha-proxy-accelerator/${{ matrix.arch }}:latest
           build-args: |
             BUILD_FROM=${{ matrix.base }}
             BUILD_VERSION=${{ env.VERSION }}
