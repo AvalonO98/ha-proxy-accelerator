@@ -705,7 +705,7 @@ async def main():
     server = await asyncio.start_server(proxy_cb, "0.0.0.0", args.proxy_port)
     websrv = await asyncio.start_server(web_cb, "0.0.0.0", args.web_port)
     print("[up] proxy=%s web=%s state=%s" % (args.proxy_port, args.web_port,
-                                             state.path))
+                                             state.path), flush=True)
     await asyncio.gather(server.serve_forever(), websrv.serve_forever())
 
 
