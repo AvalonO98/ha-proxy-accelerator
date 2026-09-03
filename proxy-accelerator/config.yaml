@@ -44,49 +44,18 @@ options:
   hacs_patch_enabled: false
   hacs_github_proxy: "https://ghfast.top/"
 
+# schema 采用 Supervisor 经典简写(列表 = 下拉框), 兼容严格校验的新版 Supervisor
 schema:
-  enabled:
-    name: "代理入口总开关"
-    description: "关闭时代理端口直接拒绝转发(403), 打开后才按下方上游转发"
-    type: bool
-    default: false
+  enabled: bool
   mode:
-    name: "上游类型"
-    description: "direct=本机直连; http=走 HTTP 代理; socks5=走 SOCKS5 代理"
-    type: select
-    options:
-      - direct
-      - http
-      - socks5
-    default: http
-  upstream:
-    name: "上游代理地址"
-    description: "例如 192.168.1.2:7890 (你的 Clash/机场 客户端地址)"
-    type: str
-    default: 127.0.0.1:7890
-  upstream_user:
-    name: "上游用户名(可选)"
-    type: str
-    default: ""
-  upstream_pass:
-    name: "上游密码(可选)"
-    type: str
-    default: ""
+    - direct
+    - http
+    - socks5
+  upstream: str
+  upstream_user: str
+  upstream_pass: password
   acl_mode:
-    name: "ACL 模式"
-    description: "whitelist=仅放行白名单域名(默认安全); global=放行所有域名"
-    type: select
-    options:
-      - whitelist
-      - global
-    default: whitelist
-  hacs_patch_enabled:
-    name: "HACS 官方组件加速"
-    description: "对 custom_components/hacs 打补丁, 把 GitHub 下载改写为镜像前缀(自动备份, 可回滚)"
-    type: bool
-    default: false
-  hacs_github_proxy:
-    name: "HACS GitHub 反代前缀"
-    description: "需要以 / 结尾; 例如 https://ghfast.top/ 或 https://gh-proxy.com/"
-    type: str
-    default: "https://ghfast.top/"
+    - whitelist
+    - global
+  hacs_patch_enabled: bool
+  hacs_github_proxy: str
