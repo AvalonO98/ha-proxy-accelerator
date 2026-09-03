@@ -44,7 +44,7 @@
 3. 商店出现 **HA 代理加速器** → 安装 → 启动 → 打开侧边栏面板「HA 代理加速器」。
 
 ### 方式 B：本地加载项
-把本仓库整个文件夹放到 HA 的 addons 共享目录（Samba 里的 `addons`，或 SSH 到 `/addons/ha-proxy-accelerator`），然后 **设置 → 加载项 → 本地加载项** 中刷新并安装。安装即在本机 Docker 构建（构建基础镜像来自 ghcr.io/home-assistant/*-base，需要能访问 ghcr 一次）。
+在 addons 共享目录（Samba 里的 `addons`，映射宿主 `/addons`）新建文件夹，把本仓库 **`proxy-accelerator/` 子目录的内容**放进去，使路径为 `/addons/proxy-accelerator/config.yaml`，然后 **设置 → 加载项 → 本地加载项** 中刷新并安装。安装时会在本机 Docker 构建（需能访问 ghcr.io 拉一次基础镜像）。
 
 > 面板通过 **Ingress** 提供，无需额外开放端口；代理入口 `8899/tcp` 会发布到宿主机供局域网使用。
 
@@ -101,20 +101,23 @@ sudo systemctl restart docker
 ## 项目结构
 
 ```
-ha-proxy-accelerator/
-├── config.yaml            # add-on 清单(Ingress/端口/权限/默认选项/中文 schema)
-├── build.json             # 多架构构建源(ghcr.io/home-assistant/*-base)
-├── Dockerfile             # 极简镜像(仅 python3)
-├── repository.json        # HA 加载项仓库注册信息
-├── rootfs/
-│   ├── run.sh             # 入口: 引导配置 → 启动 server
-│   └── app/
-│       ├── server.py      # asyncio 正向代理(8899) + 面板/API(8099)
-│       ├── hacs_patch.py  # HACS 补丁(备份/回滚/覆盖检测)
-│       ├── bootstrap.py   # options.json → settings.json 首启引导
-│       └── web/           # 面板前端(index.html/style.css/app.js)
-└── README.md
+ha-proxy-accelerator/                  # GitHub 仓库根(README / 仓库信息)
+├── repository.json                    # 仓库卡片信息(商店显示用)
+├── README.md / LICENSE / .gitignore
+└── proxy-accelerator/                 # ← add-on 本体子目录(商店扫描目录)
+    ├── config.yaml                    # add-on 清单(Ingress/端口/权限/默认选项)
+    ├── Dockerfile / build.json        # 多架构构建
+    ├── .dockerignore
+    └── rootfs/
+        ├── run.sh                     # 入口: 引导配置 → 启动 server
+        └── app/
+            ├── server.py              # asyncio 正向代理(8899) + 面板/API(8099)
+            ├── hacs_patch.py          # HACS 补丁(备份/回滚/覆盖检测)
+            ├── bootstrap.py           # options.json → settings.json 首启引导
+            └── web/                   # 面板前端(index.html/style.css/app.js)
 ```
+
+> 结构说明：Home Assistant 的加载项商店只扫描**仓库的子目录**（每个子目录一个 add-on），所以 add-on 本体必须放在 `proxy-accelerator/` 子目录里，根目录只放 `repository.json` 与文档。
 
 - 配置持久化：`/data/settings.json`；所有开关即时写入、连接级重读，无需重启。
 - 纯 Python 3 标准库，无第三方依赖；镜像极小。
@@ -130,6 +133,7 @@ python3 rootfs/app/hacs_patch.py status | apply 'https://ghfast.top/' | rollback
 
 ## FAQ
 
+- **商店里能看到仓库卡片，但没有加载项出现？** add-on 必须位于仓库的**子目录**里（本仓库是 `proxy-accelerator/`）。更新到该结构后，请在 加载项商店 → ⋮ → 仓库 中**删除该仓库再重新添加**（或触发一次「检查更新」），加载项即会出现。
 - **面板里 ① 全绿，HACS 下载还是慢？** HACS 加速走 ④（应用补丁 + 重启 HA），不是 ①。补丁被 HACS 更新覆盖后需重新应用。
 - **为什么 ② 的 daemon.json 不能直接改？** add-on 沙箱无宿主文件系统权限（HAOS 只读）。这是安全边界；面板把配置生成到可复制的程度已经是最大能力。
 - **为什么 ③ 说 registry-mirrors 没用？** 它只对 Docker Hub 生效，HA 内核镜像在 ghcr.io。要么 dockerd 走代理，要么用定制固件，没有第三条 add-on 内可自动化的路。
