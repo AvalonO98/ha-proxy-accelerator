@@ -421,6 +421,22 @@ MIRROR_TEST_CACHE = {}
 MIRROR_CACHE_TTL = 60
 
 
+def normalize_ingress_path(path, headers):
+    """新版 Supervisor(Apps) 的 Ingress 会把 /api/hassio_ingress/<token>/...
+    前缀转发进容器; 剥离该前缀后再路由, 同时兼容容器内直连(无前缀)。
+
+    优先用 Supervisor 注入的 X-Ingress-Path 请求头, 否则用路径正则兜底。
+    """
+    for k, v in headers:
+        if k.lower() == "x-ingress-path" and v and path.startswith(v):
+            rest = path[len(v):]
+            return rest or "/"
+    m = re.match(r"^/api/hassio_ingress/[^/]+(/.*)?$", path)
+    if m:
+        return m.group(1) or "/"
+    return path
+
+
 class WebHandler:
     def __init__(self, state):
         self.state = state
@@ -433,7 +449,8 @@ class WebHandler:
             writer.close()
             return
         method = req["method"]
-        path = urllib.parse.urlsplit(req["target"]).path
+        path = normalize_ingress_path(
+            urllib.parse.urlsplit(req["target"]).path, req["headers"])
         headers = req["headers"]
 
         try:
@@ -663,7 +680,7 @@ async def check_mirrors(settings):
     return out
 
 
-APP_VERSION = "0.3.0"
+APP_VERSION = "0.3.1"
 
 
 async def main():

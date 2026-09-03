@@ -15,7 +15,7 @@ permissions:
 
 env:
   IMAGE: ghcr.io/avalono98/ha-proxy-accelerator
-  VERSION: "0.3.0"
+  VERSION: "0.3.1"
 
 jobs:
   build:
