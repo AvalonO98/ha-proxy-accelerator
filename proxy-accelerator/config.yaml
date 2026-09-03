@@ -6,7 +6,8 @@ description: >
      一键生成宿主侧配置向导；③ HACS 官方组件更新加速(可开关补丁，备份可回滚)。
 version: 0.3.0
 url: https://github.com/AvalonO98/ha-proxy-accelerator
-# image: ghcr.io/ha-proxy-accelerator/{arch}-proxy-accelerator
+# 预构建镜像: 由 .github/workflows/build.yml 推送到 ghcr; 商店直接拉镜像, 不本机构建
+image: ghcr.io/AvalonO98/ha-proxy-accelerator/{arch}
 arch:
   - aarch64
   - amd64
