@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HA 代理加速器</title>
+<base href="./">
+<link rel="stylesheet" href="static/style.css">
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>HA 代理加速器 <span id="ver" class="ver"></span></h1>
+      <p class="sub">Home Assistant 代理 &amp; 加速控制台 · 所有开关即时生效</p>
+    </div>
+    <div class="head-status">
+      <span id="proxyStateDot" class="dot off"></span>
+      <span id="proxyStateText">代理入口: 关闭</span>
+    </div>
+  </header>
+
+  <!-- 主开关 -->
+  <section class="card hero" id="cardMaster">
+    <div class="hero-left">
+      <h2>代理入口总开关</h2>
+      <p>打开后, 端口 <b id="proxyPortLbl">8899</b> 才接受转发; 关闭时一律返回 403。</p>
+    </div>
+    <label class="switch big">
+      <input type="checkbox" id="swProxy">
+      <span class="slider"></span>
+    </label>
+  </section>
+
+  <!-- 上游设置 -->
+  <section class="card">
+    <h2>① 自选上游代理</h2>
+    <div class="grid2">
+      <label>上游类型
+        <select id="mode">
+          <option value="direct">direct — 本机直连</option>
+          <option value="http">http — 走 HTTP 代理</option>
+          <option value="socks5">socks5 — 走 SOCKS5 代理</option>
+        </select>
+      </label>
+      <label>上游地址 (host:port, 如 192.168.1.2:7890)
+        <input id="upstream" type="text" placeholder="127.0.0.1:7890">
+      </label>
+      <label>上游用户名 (可选)
+        <input id="upUser" type="text" autocomplete="off">
+      </label>
+      <label>上游密码 (可选)
+        <input id="upPass" type="password" autocomplete="new-password">
+      </label>
+      <label>访问控制
+        <select id="aclMode">
+          <option value="whitelist">whitelist — 仅放行加速白名单</option>
+          <option value="global">global — 放行所有域名</option>
+        </select>
+      </label>
+      <label>域名白名单 (每行一个, 支持子域通配)
+        <textarea id="whitelist" rows="5" spellcheck="false"></textarea>
+      </label>
+    </div>
+    <div class="actions">
+      <button id="btnSaveUpstream" class="btn primary">保存上游配置</button>
+      <button id="btnProbeUpstream" class="btn">检测上游连通性</button>
+      <button id="btnResetWhitelist" class="btn ghost">恢复默认白名单</button>
+      <span id="upstreamResult" class="result"></span>
+    </div>
+    <p class="tip">提示: 代理入口端口可在加载项「配置」里修改(端口 8899/tcp)。局域网设备把 HTTP 代理指向
+      <b>&lt;HA主机IP&gt;:8899</b> 即可借用此链路(配合上面的域名白名单只加速 GitHub/Docker 等)。</p>
+  </section>
+
+  <!-- Docker Hub 镜像加速 -->
+  <section class="card">
+    <h2>② Docker Hub 镜像加速 <span class="tag">HA 更新/add-on 安装主要走 ghcr, Hub 加速针对镜像商店</span></h2>
+    <div class="grid2">
+      <label>Hub 加速镜像 (每行一个, https 地址)
+        <textarea id="hubMirrors" rows="5" spellcheck="false"></textarea>
+      </label>
+      <div>
+        <h3>可达性检测 <button id="btnCheckHub" class="btn sm">重新检测</button></h3>
+        <ul id="hubResult" class="mirror-list"></ul>
+      </div>
+    </div>
+    <div class="actions">
+      <button id="btnGenDaemon" class="btn primary">生成宿主 daemon.json 片段</button>
+      <button id="btnCopyDaemon" class="btn">复制</button>
+      <button id="btnCopyUdev" class="btn">复制 HAOS 持久化脚本 (udev)</button>
+    </div>
+    <pre id="daemonJson" class="code"></pre>
+    <details class="help">
+      <summary>DAEMON_JSON 怎么用? (HAOS 与 Supervised 不同)</summary>
+      <div>
+        <p><b>Supervised / Debian 主机:</b> 把上面的 registry-mirrors 写入 <code>/etc/docker/daemon.json</code>,
+           然后 <code>sudo systemctl restart docker</code>。之后 <code>docker pull</code> 与 Supervisor 安装
+           Docker Hub 镜像(add-on 商店里的纯 hub 镜像)都会先试加速源。</p>
+        <p><b>HAOS(系统盘只读):</b> HAOS 上 <code>/etc/docker/daemon.json</code> 无法直接改。社区常用「udev 规则」
+           在开机时把配置写进去。点击「复制 HAOS 持久化脚本」, 把脚本内容通过官方 SSH &amp; Web Terminal 写入
+           <code>/etc/udev/rules.d/99-docker-mirror.rules</code> 即可(不会随系统升级丢失)。
+           写入后 <b>重启主机</b> 生效。</p>
+        <p class="warn">注意: 若你的网络能直连 Docker Hub, 镜像源收益有限且失效频繁 —— 面板的「可达性检测」
+           会标红不可用的源, 请选绿点延迟最低的 1~2 个。</p>
+      </div>
+    </details>
+  </section>
+
+  <!-- GHCR / HA 内核更新 -->
+  <section class="card">
+    <h2>③ GHCR 加速 — Home Assistant 内核更新 <span class="tag">core / supervisor / add-on 镜像均来自 ghcr.io</span></h2>
+    <div class="grid2">
+      <label>GHCR 加速镜像 (每行一个)
+        <textarea id="ghcrMirrors" rows="4" spellcheck="false"></textarea>
+      </label>
+      <div>
+        <h3>可达性检测 <button id="btnCheckGhcr" class="btn sm">重新检测</button></h3>
+        <ul id="ghcrResult" class="mirror-list"></ul>
+      </div>
+    </div>
+    <div class="actions">
+      <button id="btnCopyDockerProxy" class="btn">复制 dockerd 走代理配置 (systemd)</button>
+      <button id="btnCopyUdevProxy" class="btn">复制 HAOS 全流量代理脚本 (udev)</button>
+    </div>
+    <pre id="proxyConf" class="code"></pre>
+    <details class="help">
+      <summary>原理与前提: 为什么 HA 内核更新需要 dockerd 走代理, 而不是 registry-mirrors</summary>
+      <div>
+        <p>Supervisor 拉取内核镜像的地址写死为 <code>ghcr.io/home-assistant/…</code>。
+           Docker 的 <code>registry-mirrors</code> 只对 Docker Hub 生效, 对 ghcr.io 无效。
+           因此让「HA 更新」变快只有两条路:</p>
+        <ul>
+          <li><b>a) 给 dockerd 配 HTTP(S) 代理</b>(Supervised 上最简单): 上方按钮生成
+              <code>/etc/systemd/system/docker.service.d/http-proxy.conf</code> 内容, 其中代理指向本插件的
+              入口(如 <code>http://&lt;HA主机IP&gt;:8899</code>)。之后 dockerd 拉 ghcr 与 Hub 都走你的上游。
+              <b>前提:</b> 本插件「代理入口总开关」需打开且上游可用; 白名单已默认放行 ghcr.io/docker.io。</li>
+          <li><b>b) HAOS 开机脚本注入 daemon.json/代理</b>: HAOS 上 docker 由系统管理, 采用与 ② 相同的
+              udev 持久化写法(点击上方按钮生成), 把 <code>HTTP_PROXY</code>/<code>HTTPS_PROXY</code> 注入
+              docker 服务环境再重启 docker。</li>
+        </ul>
+        <p class="warn">两条路都属于「宿主侧配置」, add-on 沙箱无法代写 —— 这是 Home Assistant 的安全边界。
+           本面板负责: 生成可直接粘贴的配置、检测镜像/链路可用性、以及开关你的代理入口。</p>
+      </div>
+    </details>
+  </section>
+
+  <!-- HACS 加速 -->
+  <section class="card">
+    <h2>④ HACS 官方组件加速 <span class="tag">基于社区「HACS 极速版」补丁思路, 自动备份可回滚</span></h2>
+    <div class="row">
+      <div class="grow">
+        <p id="hacsStatus">正在读取 HACS 状态…</p>
+        <label>GitHub 反代前缀 (需以 / 结尾)
+          <input id="hacsPrefix" type="text" placeholder="https://ghfast.top/">
+        </label>
+        <p class="tip">原理: 把 <code>custom_components/hacs</code> 内写死的 GitHub 下载地址
+           (api.github.com / raw.githubusercontent.com 等) 改写为「反代前缀 + 原地址」,
+           使 HACS 的更新/下载流量先经过国内可达的 GitHub 反代。修改前自动整目录备份,
+           关闭开关即一键回滚; 应用后建议重启 Home Assistant。</p>
+      </div>
+      <div class="col">
+        <label class="switch big">
+          <input type="checkbox" id="swHacs" disabled>
+          <span class="slider"></span>
+        </label>
+        <button id="btnRestartHa" class="btn">应用后重启 HA</button>
+      </div>
+    </div>
+    <div class="actions">
+      <button id="btnHacsApply" class="btn primary">应用加速补丁</button>
+      <button id="btnHacsRollback" class="btn danger">回滚(关闭补丁)</button>
+      <span id="hacsResult" class="result"></span>
+    </div>
+  </section>
+
+  <!-- 链路诊断 -->
+  <section class="card">
+    <h2>⑤ 链路诊断 <span class="tag">从本插件容器直连探测, 判断加速对象可达性</span></h2>
+    <button id="btnDiag" class="btn">开始诊断</button>
+    <table class="diag">
+      <thead><tr><th>目标</th><th>结果</th><th>耗时</th><th>说明</th></tr></thead>
+      <tbody id="diagBody"></tbody>
+    </table>
+  </section>
+
+  <footer>
+    <p>HA 代理加速器 · 所有开关即时写入 /data/settings.json · 宿主侧(daemon.json/dockerd 代理)由面板生成向导, 手动应用。</p>
+  </footer>
+</div>
+
+<div id="toast" class="toast"></div>
+<script src="static/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,92 @@
+name: HA 代理加速器
+slug: proxy_accelerator
+description: >
+  代理 + 加速一体面板：① 自选上游(HTTP/SOCKS5)的可开关正向代理入口；
+  ② Docker Hub / GHCR / GitHub 镜像加速：内置常用加速镜像与可达性检测，
+     一键生成宿主侧配置向导；③ HACS 官方组件更新加速(可开关补丁，备份可回滚)。
+version: 0.3.0
+url: https://github.com/AvalonO98/ha-proxy-accelerator
+# image: ghcr.io/ha-proxy-accelerator/{arch}-proxy-accelerator
+arch:
+  - aarch64
+  - amd64
+  - armv7
+  - i386
+startup: application
+boot: auto
+init: false
+
+# 正向代理入口, 发布到宿主机供局域网客户端/其它容器使用
+ports:
+  8899/tcp: 8899
+ports_description:
+  8899/tcp: HTTP(S)/SOCKS5 正向代理入口（默认 8899，可改）
+
+# 面板由 Supervisor Ingress 反代: 容器内 8099
+ingress: true
+ingress_port: 8099
+ingress_entry: /
+
+# 允许访问 Supervisor API(用于 HACS 补丁后一键重启 Home Assistant; 令牌经
+# $SUPERVISOR_TOKEN 注入, Supervisor 地址 http://supervisor)与读写 /config
+hassio_api: true
+map:
+  - config: rw
+
+# 首次安装时的默认选项(装好后在面板里改即可, 面板配置保存在 /data)
+options:
+  enabled: false
+  mode: http
+  upstream: 127.0.0.1:7890
+  upstream_user: ""
+  upstream_pass: ""
+  acl_mode: whitelist
+  hacs_patch_enabled: false
+  hacs_github_proxy: https://ghfast.top/
+
+schema:
+  enabled:
+    name: 代理入口总开关
+    description: 关闭时代理端口直接拒绝转发(403), 打开后才按下方上游转发
+    type: bool
+    default: false
+  mode:
+    name: 上游类型
+    description: direct=本机直连; http=走 HTTP 代理; socks5=走 SOCKS5 代理
+    type: select
+    options:
+      - direct
+      - http
+      - socks5
+    default: http
+  upstream:
+    name: 上游代理地址
+    description: 例如 192.168.1.2:7890 (你的 Clash/机场 客户端地址)
+    type: str
+    default: 127.0.0.1:7890
+  upstream_user:
+    name: 上游用户名(可选)
+    type: str
+    default: ""
+  upstream_pass:
+    name: 上游密码(可选)
+    type: str
+    default: ""
+  acl_mode:
+    name: ACL 模式
+    description: whitelist=仅放行白名单域名(默认安全); global=放行所有域名
+    type: select
+    options:
+      - whitelist
+      - global
+    default: whitelist
+  hacs_patch_enabled:
+    name: HACS 官方组件加速
+    description: 对 custom_components/hacs 打补丁, 把 GitHub 下载改写为镜像前缀(自动备份, 可回滚)
+    type: bool
+    default: false
+  hacs_github_proxy:
+    name: HACS GitHub 反代前缀
+    description: 需要以 / 结尾; 例: https://ghfast.top/  或 https://gh-proxy.com/
+    type: str
+    default: https://ghfast.top/

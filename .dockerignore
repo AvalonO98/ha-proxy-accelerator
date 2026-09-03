@@ -1,0 +1,9 @@
+.git
+.tmp-test
+*.log
+__pycache__/
+*.pyc
+.DS_Store
+README.md
+repository.json
+LICENSE
