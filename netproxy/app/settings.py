@@ -35,7 +35,7 @@ DEFAULTS = {
     "mirrors": ["https://docker.m.daocloud.io", "https://docker.1ms.run"],
     "github_mirrors": ["https://ghfast.top/"],
     "upstream": {"type": "none", "url": "", "username": "", "password": ""},
-    "subscription": {"url": "", "name": ""},
+    "subscription": {"url": "", "profile": ""},
     "wireguard": {"config": ""},
     "kernel_url": "",
     "kernel_version": "",

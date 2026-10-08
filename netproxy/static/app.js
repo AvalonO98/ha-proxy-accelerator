@@ -128,7 +128,7 @@ function readForm() {
   c.github_mirrors = lines($("gh-mirrors").value);
   c.kernel_version = $("kernel-ver").value.trim();
   c.upstream = { type: $("up-type").value, url: $("up-url").value.trim(), username: $("up-user").value.trim(), password: $("up-pass").value };
-  c.subscription = { url: $("sub-url").value.trim(), name: $("sub-name").value.trim() };
+  c.subscription = { url: $("sub-url").value.trim(), profile: $("sub-name").value.trim() };
   c.wireguard = { config: $("wg-config").value };
   c.dns = lines($("dns").value);
   c.kernel_url = $("kernel-url").value.trim();
@@ -148,7 +148,7 @@ function writeForm(cfg) {
   $("up-user").value = (cfg.upstream && cfg.upstream.username) || "";
   $("up-pass").value = (cfg.upstream && cfg.upstream.password) || "";
   $("sub-url").value = (cfg.subscription && cfg.subscription.url) || "";
-  $("sub-name").value = (cfg.subscription && cfg.subscription.name) || "";
+  $("sub-name").value = (cfg.subscription && cfg.subscription.profile) || "";
   $("wg-config").value = (cfg.wireguard && cfg.wireguard.config) || "";
   $("dns").value = (cfg.dns || []).join("\n");
   $("kernel-url").value = cfg.kernel_url || "";
@@ -192,9 +192,14 @@ function render() {
   // 横幅
   const bs = [];
   if (!cap.host_access) {
+    const why = cap.reason ? esc(cap.reason) : "";
     bs.push(`<div class="banner err">${LANG === "zh"
-      ? "拿不到宿主机文件系统访问权限（当前模式 " + esc(cap.namespace_mode) + "），方式 A/B/C 都无法生效。请确认插件权限含 host_pid: true 与 privileged: [SYS_ADMIN]。"
-      : "No host filesystem access (mode " + esc(cap.namespace_mode) + "); modes A/B/C cannot take effect. Check host_pid: true and privileged: [SYS_ADMIN]."}</div>`);
+      ? "拿不到宿主机文件系统访问权限（当前模式 " + esc(cap.namespace_mode) + "），方式 A/B/C 都无法生效。<br>"
+        + "最常见原因：插件处于 Supervisor 的<b>保护模式</b>——保护模式下 host_pid / docker_api 不会生效。"
+        + "请在插件页面关闭「保护模式」后重启插件。<br>"
+      : "No host filesystem access (mode " + esc(cap.namespace_mode) + "); modes A/B/C cannot take effect.<br>"
+        + "Most likely cause: the add-on runs in Supervisor <b>protection mode</b>, which disables host_pid / docker_api. "
+        + "Turn protection mode off on the add-on page and restart.<br>"}${why}</div>`);
   }
   if (ap.pending_verify) {
     bs.push(`<div class="banner warn">${LANG === "zh"

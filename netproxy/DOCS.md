@@ -129,13 +129,39 @@ Supervisor ──► dockerd ──► ghcr.io / registry-1.docker.io
 ## 6. 排错
 
 ### 面板显示「拿不到宿主机文件系统访问权限」
-插件的 `host_pid` / `privileged` 没生效。确认 `config.yaml` 里有：
-```yaml
-host_pid: true
-apparmor: false
-privileged: [SYS_ADMIN, NET_ADMIN, NET_RAW, DAC_READ_SEARCH]
+
+**最常见原因是 Supervisor 的「保护模式」还开着。** 保护模式下 Supervisor 不会把
+`host_pid` 与 `docker_api` 应用到容器（源码 `supervisor/docker/app.py`：
+
+```python
+def pid_mode(self):
+    if not self.app.protected and self.app.host_pid:
+        return "host"
 ```
-给插件改了权限后需要重新安装/重建容器才会生效。
+
+），于是插件拿不到宿主 PID 命名空间，读写宿主 `/etc/docker/daemon.json` 全部失效。
+
+本插件已在 `config.yaml` 里声明 `protected: false`，安装后默认就是关闭状态；如果面板仍报这个错：
+
+1. 打开插件页面（设置 → 加载项 → Net Proxy），在「保护模式」处确认它是**关闭**的；
+2. 关闭后**重启插件**（保护模式只在容器创建时生效）；
+3. 面板首页的「宿主访问能力」应变为 `host:host` 且不再有红色横幅。
+
+插件需要的完整权限如下（`config.yaml` 已声明）：
+
+```yaml
+host_network: true         # 与宿主共享网络，本地代理监听 127.0.0.1 供 dockerd 使用
+host_pid: true             # 与宿主共享 PID 命名空间 → 可发 SIGHUP、可直接 nsenter
+apparmor: false            # AppArmor 会拦截 setns(进入宿主命名空间)
+protected: false           # 否则 host_pid / docker_api 不生效
+privileged: [SYS_ADMIN, NET_ADMIN, NET_RAW, DAC_READ_SEARCH]
+docker_api: true           # 读 dockerd 实时配置(/info)，用于"真实生效"校验
+map: [share:rw]            # /share 用于手动放置 mihomo 内核与本地订阅文件
+```
+
+> 安全提醒：这些权限等价于宿主机 root（本插件本来就要改 dockerd 配置）。
+> 请只在自己的 HA 上使用，不要把它暴露到公网。面板本身走 Home Assistant 的 Ingress 鉴权，
+> 默认不发布任何端口。
 
 ### 方式 B/C 应用后 HA 没回来
 - 插件会在 3 分钟后由宿主脚本自动还原配置并重启 docker；

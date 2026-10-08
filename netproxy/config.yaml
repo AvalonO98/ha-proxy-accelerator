@@ -1,5 +1,5 @@
 name: "Net Proxy (网络代理)"
-version: "0.1.0"
+version: "0.1.1"
 slug: "netproxy"
 description: >-
   网络代理与镜像加速面板：总开关 + 三种代理方式（Docker 加速镜像 / 上游 HTTP-SOCKS5 代理与订阅 / 内置
@@ -27,6 +27,13 @@ host_network: true
 host_pid: true
 # AppArmor 会拦截 setns(进入宿主命名空间)，必须关闭
 apparmor: false
+# 必须关闭 Supervisor 的"保护模式"：
+#   supervisor/docker/app.py 里，host_pid 与 docker_api 只在 `not protected` 时才生效
+#   （pid_mode: return "host" if not self.app.protected and self.app.host_pid else None）。
+#   默认 protected=True，会导致插件拿不到宿主 PID 命名空间，也无法读写宿主
+#   /etc/docker/daemon.json —— 那样本插件就完全失效。这里声明默认关闭，
+#   用户仍可在插件页面重新打开（打开即失效，面板会明确提示原因）。
+protected: false
 privileged:
   - SYS_ADMIN
   - NET_ADMIN
@@ -57,7 +64,9 @@ options:
     password: ""
   subscription:
     url: ""
-    name: ""
+    # 注意：这个键不能叫 name——Supervisor 要求嵌套配置组的翻译里必须有一个
+    # 字符串型的 name（组显示名），与"叫 name 的选项"冲突会导致 translations 读取失败。
+    profile: ""
   wireguard:
     config: ""
   kernel_url: ""
@@ -83,7 +92,7 @@ schema:
     password: password?
   subscription:
     url: str?
-    name: str?
+    profile: str?
   wireguard:
     config: str?
   kernel_url: str?

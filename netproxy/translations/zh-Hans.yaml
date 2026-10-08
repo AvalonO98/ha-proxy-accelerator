@@ -21,22 +21,25 @@ configuration:
     name: mihomo 内核版本
     description: 留空表示用最新版；若 GitHub API 不可达，可手填版本号（如 v1.19.32）。
   upstream:
+    name: 上游代理
     type:
       name: 上游代理类型
     url:
       name: 上游代理地址
-      description: 例如 http://192.168.1.10:7890 或 socks5://192.168.1.10:1080
+      description: 例如 http://192.168.1.10:7890 或 socks5://用户名:密码@192.168.1.10:1080
     username:
       name: 上游代理用户名
     password:
       name: 上游代理密码
   subscription:
+    name: 订阅
     url:
       name: 订阅地址
       description: Clash/mihomo 订阅链接，由插件拉取后作为 proxy-provider 使用。
-    name:
+    profile:
       name: 订阅配置名
   wireguard:
+    name: WireGuard
     config:
       name: WireGuard 配置
       description: 粘贴标准 WireGuard .conf（[Interface] + [Peer]），会自动转换为 mihomo 的 wireguard 出站。

@@ -1,5 +1,27 @@
 # 变更记录
 
+## 0.1.1
+
+真实 HAOS（HAOS + x86_64，Docker Hub 不可达）实机验证后修复：
+
+**修复**
+- **关闭保护模式**：`supervisor/docker/app.py` 中 `host_pid` 与 `docker_api` 只在
+  `not protected` 时生效（默认 `protected: true`），实测会导致插件拿不到宿主 PID
+  命名空间、没有 docker socket，从而完全无法改 dockerd 配置。现在由
+  `config.yaml` 声明 `protected: false`，用户无需手工关开关。
+- **修正宿主访问误判**（实机复现）：原来只判断 `nsenter -t 1 -m` 是否成功，
+  保护模式下 PID 1 是容器自己的 init，`nsenter` 会"成功"进入**本容器**的 mount
+  namespace（`/etc/os-release` 仍是 Alpine），于是误判为有宿主访问、写入却落在容器内。
+  现在改为校验 PID 1 的根文件系统确实是宿主（存在 `/etc/hassos-release`、
+  `/usr/lib/systemd/systemd` 等标记），并在面板上给出明确原因。
+- **translations 结构**：嵌套配置组的翻译必须含字符串型 `name`（组显示名），与"名为
+  `name` 的选项"冲突。`subscription.name` 选项改名为 `subscription.profile`，并补齐
+  `upstream` / `subscription` / `wireguard` 的组名（中英）。
+
+**文档**
+- DOCS 增加保护模式说明与完整权限清单；README 说明"Docker Hub 被墙时 Supervisor
+  无法本地构建 add-on"的引导问题与预构建镜像方案。
+
 ## 0.1.0
 
 首个版本。

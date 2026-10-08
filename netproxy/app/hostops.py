@@ -38,9 +38,55 @@ def _nsenter_path() -> Optional[str]:
     return shutil.which("nsenter")
 
 
+#: 只在"真正的宿主机根文件系统"里才存在的标记
+_HOST_MARKERS = ("/etc/hassos-release", "/etc/hassos-config", "/usr/lib/systemd/systemd", "/run/hassio-hc")
+
+
+def _host_marker_via_ns() -> Optional[str]:
+    ns = _nsenter_path()
+    if not ns:
+        return None
+    for m in _HOST_MARKERS:
+        try:
+            r = subprocess.run([ns, "-t", str(_GLOBAL_PID1), "-m", "--", "test", "-e", m],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
+            if r.returncode == 0:
+                return m
+        except Exception:
+            continue
+    return None
+
+
+def _pid1_is_host() -> bool:
+    """判断 PID 1 是否真的是宿主机 init。
+
+    这是踩过的坑：宿主访问**不能**只用"nsenter 是否成功"来判断。
+    若 host_pid 没生效（典型原因：插件处于 Supervisor 的**保护模式**，
+    Supervisor 只在 `not protected and host_pid` 时才加 `--pid=host`），
+    那么 PID 1 就是本容器自己的 init，`nsenter -t 1 -m` 会"成功"地进入
+    **本容器自己的** mount namespace —— 于是探测误判为有宿主访问，
+    接着所有写入都会落到容器内部，等于什么都没改却以为改成功了。
+    """
+    try:
+        with open("/proc/1/root/etc/os-release", "r", encoding="utf-8", errors="replace") as f:
+            pid1_os = f.read().strip()
+        with open("/etc/os-release", "r", encoding="utf-8", errors="replace") as f:
+            self_os = f.read().strip()
+    except OSError:
+        # 读不到 PID1 的 root（没有 host_pid 时通常仍可读，但保守起见先看 systemd）
+        return os.path.exists("/proc/1/root/usr/lib/systemd/systemd")
+    if pid1_os and pid1_os == self_os:
+        return False   # 与自身完全相同 → 没共享宿主 PID 命名空间
+    return True
+
+
 def _nsenter_works() -> bool:
     ns = _nsenter_path()
     if not ns:
+        return False
+    if not _pid1_is_host():
+        return False
+    if not _host_marker_via_ns():
         return False
     try:
         r = subprocess.run(
@@ -246,12 +292,26 @@ def signal_pid(pid: int, sig: int) -> Tuple[bool, str]:
 def capability_report(paths: Sequence[str] = ()) -> dict:
     """能力探测：面板首页展示"能不能真正落地"。"""
     mode = namespace_mode()
+    pid1 = _read_local("/proc/1/comm")
+    reason = ""
+    if mode != "host":
+        if not _nsenter_path():
+            reason = "容器里没有 nsenter"
+        elif not _pid1_is_host():
+            reason = ("未与宿主机共享 PID 命名空间：插件很可能处于 Supervisor 的**保护模式**。"
+                      "保护模式下 Supervisor 不会应用 host_pid / docker_api（见 supervisor/docker/app.py）。"
+                      "本插件在 config.yaml 里声明了 protected: false，若仍是保护模式，"
+                      "请在插件页面把「保护模式」关掉后重启插件。")
+        else:
+            reason = "nsenter 无法进入宿主 mount 命名空间"
     rep = {
         "namespace_mode": mode,
         "host_access": mode == "host",
-        "pid1": _read_local("/proc/1/comm") or "?",
+        "reason": reason,
+        "pid1": pid1 or "?",
         "nsenter": _nsenter_path() or "",
-        "host_pid_shared": _read_local("/proc/1/comm") in ("systemd", "init", "tini"),
+        "host_pid_shared": _pid1_is_host() if _nsenter_path() else False,
+        "host_marker": _host_marker_via_ns() or "",
         "paths": {},
     }
     for p in paths:

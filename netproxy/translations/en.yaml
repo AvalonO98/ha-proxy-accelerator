@@ -38,7 +38,7 @@ configuration:
     url:
       name: Subscription URL
       description: Clash/mihomo subscription URL. Fetched by the add-on and used as a proxy provider.
-    name:
+    profile:
       name: Subscription profile name
   wireguard:
     name: WireGuard
