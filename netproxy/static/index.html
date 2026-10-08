@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>网络代理 · Net Proxy</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">⇄</span>
+      <div>
+        <h1 data-i18n="title">网络代理</h1>
+        <div class="sub" data-i18n="subtitle">让 HA 系统更新与插件安装的镜像拉取走代理 / 加速源</div>
+      </div>
+    </div>
+    <div class="top-right">
+      <div id="statePill" class="pill pill-off" data-i18n="state_off">未启用</div>
+      <label class="switch" title="总开关">
+        <input type="checkbox" id="master">
+        <span class="slider"></span>
+      </label>
+      <button class="ghost" id="langBtn">EN</button>
+    </div>
+  </header>
+
+  <div id="banners"></div>
+
+  <section class="card">
+    <div class="card-head">
+      <h2 data-i18n="sec_mode">1 · 选择代理方式</h2>
+      <span class="hint" data-i18n="sec_mode_hint">同一时间只启用一种方式</span>
+    </div>
+    <div class="modes">
+      <div class="mode" data-mode="docker_mirror">
+        <div class="mode-head"><b>A</b><span data-i18n="mode_a">Docker 加速镜像</span></div>
+        <ul>
+          <li data-i18n="mode_a_l1">改写 registry-mirrors，dockerd 热加载</li>
+          <li data-i18n="mode_a_l2">不重启、不中断 HA</li>
+          <li class="warn" data-i18n="mode_a_l3">只对 Docker Hub 生效（ghcr.io 不受它影响）</li>
+        </ul>
+      </div>
+      <div class="mode" data-mode="upstream_proxy">
+        <div class="mode-head"><b>B</b><span data-i18n="mode_b">上游代理 / 订阅</span></div>
+        <ul>
+          <li data-i18n="mode_b_l1">内置 mihomo，本地开 127.0.0.1:7890</li>
+          <li data-i18n="mode_b_l2">dockerd 走代理，覆盖 ghcr.io 与 Docker Hub</li>
+          <li class="warn" data-i18n="mode_b_l3">需要重启一次 dockerd（HA 短暂中断）</li>
+        </ul>
+      </div>
+      <div class="mode" data-mode="wireguard">
+        <div class="mode-head"><b>C</b><span data-i18n="mode_c">内置 WireGuard 出口</span></div>
+        <ul>
+          <li data-i18n="mode_c_l1">粘贴 .conf 即可，userspace 实现</li>
+          <li data-i18n="mode_c_l2">不改主机路由、不建 tun，风险小</li>
+          <li class="warn" data-i18n="mode_c_l3">需要重启一次 dockerd（HA 短暂中断）</li>
+        </ul>
+      </div>
+    </div>
+
+    <div id="panel-docker_mirror" class="mode-panel">
+      <div class="hint" data-i18n="mode_a_hint">
+        加速镜像地址在下面的「镜像源」区域填写（可自由增删自定义条目）。
+        改动只需要 SIGHUP 热加载，不会中断 HA。
+      </div>
+    </div>
+
+    <div id="panel-upstream_proxy" class="mode-panel">
+      <div class="grid2">
+        <div>
+          <label data-i18n="up_type">上游类型</label>
+          <select id="up-type">
+            <option value="none" data-i18n="up_none">不使用固定上游</option>
+            <option value="http">HTTP</option>
+            <option value="socks5">SOCKS5</option>
+          </select>
+        </div>
+        <div>
+          <label data-i18n="up_url">上游地址</label>
+          <input id="up-url" placeholder="http://192.168.1.10:7890">
+        </div>
+        <div><label data-i18n="up_user">用户名（可空）</label><input id="up-user"></div>
+        <div><label data-i18n="up_pass">密码（可空）</label><input id="up-pass" type="password"></div>
+      </div>
+      <hr>
+      <div class="grid2">
+        <div><label data-i18n="sub_url">订阅地址（Clash/mihomo）</label><input id="sub-url" placeholder="https://.../subscribe?token=..."></div>
+        <div><label data-i18n="sub_name">订阅名称</label><input id="sub-name"></div>
+      </div>
+      <div class="hint" data-i18n="sub_hint">
+        订阅由内核自己拉取；如果订阅地址也被墙，可把订阅内容保存成 /share/netproxy/subscription.yaml，
+        内核会自动改用它作为本地订阅文件。
+      </div>
+    </div>
+
+    <div id="panel-wireguard" class="mode-panel">
+      <label data-i18n="wg_conf">WireGuard 配置（标准 .conf）</label>
+      <textarea id="wg-config" rows="10" spellcheck="false" placeholder="[Interface]&#10;PrivateKey = ...&#10;Address = 10.0.0.2/32&#10;DNS = 1.1.1.1&#10;&#10;[Peer]&#10;PublicKey = ...&#10;AllowedIPs = 0.0.0.0/0&#10;Endpoint = vpn.example.com:51820"></textarea>
+      <div class="chips"><button class="chip" id="wgParse" data-i18n="wg_check">解析并校验</button></div>
+      <div id="wgResult" class="hint"></div>
+    </div>
+
+    <details class="adv">
+      <summary data-i18n="advanced">高级设置</summary>
+      <div class="grid2">
+        <div><label data-i18n="dns">DNS（每行一个）</label><textarea id="dns" rows="3" spellcheck="false"></textarea></div>
+        <div>
+          <label data-i18n="kernel_url">内核下载地址（可空）</label>
+          <input id="kernel-url" placeholder="https://github.com/MetaCubeX/mihomo/releases/...">
+          <label class="inline"><input type="checkbox" id="auto-rollback"> <span data-i18n="auto_rollback">代理不健康时自动回滚并关闭</span></label>
+          <div class="grid2">
+            <div><label data-i18n="health_s">容忍时长(秒)</label><input id="health-s" type="number" min="30" max="3600" step="30"></div>
+            <div><label data-i18n="apply_t">应用超时(秒)</label><input id="apply-t" type="number" min="30" max="900" step="30"></div>
+          </div>
+        </div>
+      </div>
+    </details>
+
+    <div class="actions">
+      <button class="primary" id="btnApply" data-i18n="btn_apply">应用并生效</button>
+      <button id="btnSave" data-i18n="btn_save">仅保存</button>
+      <button id="btnInstall" data-i18n="btn_install_kernel">安装/更新内核</button>
+      <button id="btnKernelRestart" data-i18n="btn_kernel_restart">重启内核</button>
+      <button class="danger" id="btnRollback" data-i18n="btn_rollback">回滚到应用前</button>
+    </div>
+    <div id="applyHint" class="hint"></div>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <h2 data-i18n="sec_mirrors">2 · 镜像源（Docker / GitHub 均可自定义）</h2>
+      <span class="hint" data-i18n="sec_mirrors_hint">两类都可以增删自定义条目，不限于内置的几个</span>
+    </div>
+    <div class="grid2">
+      <div>
+        <label data-i18n="mirrors">Docker 加速镜像地址（每行一个）</label>
+        <textarea id="mirrors" rows="5" spellcheck="false"></textarea>
+        <div class="chips">
+          <button class="chip" data-fill="https://docker.m.daocloud.io">daocloud</button>
+          <button class="chip" data-fill="https://docker.1ms.run">1ms.run</button>
+          <button class="chip" data-fill="https://dockerproxy.net">dockerproxy</button>
+          <button class="chip" data-fill="https://mirror.gcr.io">mirror.gcr.io</button>
+        </div>
+        <div class="hint" data-i18n="mirrors_hint">地址需带 http(s)://；写入 dockerd 的 registry-mirrors，热加载生效。</div>
+      </div>
+      <div>
+        <label data-i18n="gh_mirrors">GitHub 加速源（每行一个，按顺序自动回退）</label>
+        <textarea id="gh-mirrors" rows="5" spellcheck="false"></textarea>
+        <div class="chips">
+          <button class="chip" data-fill-gh="https://ghfast.top/">ghfast.top</button>
+          <button class="chip" data-fill-gh="https://gh-proxy.com/">gh-proxy.com</button>
+          <button class="chip" data-fill-gh="https://ghproxy.net/">ghproxy.net</button>
+        </div>
+        <label data-i18n="kernel_ver">mihomo 内核版本（可空 = 最新）</label>
+        <input id="kernel-ver" placeholder="v1.19.32">
+        <div class="hint" data-i18n="gh_hint">
+          前缀式：https://ghfast.top/ → https://ghfast.top/https://github.com/... ；
+          也支持含 {url} 的模板。插件下载内核、访问 GitHub 时按顺序尝试。
+        </div>
+      </div>
+    </div>
+    <div class="hint warn" data-i18n="ghcr_note">
+      注意：dockerd 的 registry-mirrors 只对 Docker Hub 生效，ghcr.io 的镜像拉取请用方式 B（HTTP/SOCKS5 代理）。
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <h2 data-i18n="sec_verify">3 · 真实生效状态</h2>
+      <span class="hint" data-i18n="sec_verify_hint">数据来自 dockerd 实时配置与宿主机文件，不是只看插件自己的设置</span>
+    </div>
+    <div class="grid3" id="verifyGrid"></div>
+    <div class="actions">
+      <button id="btnTest" data-i18n="btn_test">检测连通性（直连 vs 代理）</button>
+      <input id="pullImage" placeholder="ghcr.io/home-assistant/amd64-base:latest" style="min-width:280px">
+      <button id="btnPullTest" data-i18n="btn_pull">实测拉取镜像</button>
+    </div>
+    <div id="testOut"></div>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <h2 data-i18n="sec_log">4 · 运行日志</h2>
+      <div class="chips">
+        <button class="chip" id="btnPauseLog" data-i18n="btn_pause">暂停</button>
+        <button class="chip" id="btnClearLog" data-i18n="btn_clear_view">清屏</button>
+      </div>
+    </div>
+    <pre id="log" class="log"></pre>
+  </section>
+
+  <section class="card">
+    <div class="card-head"><h2 data-i18n="sec_hist">5 · 变更历史与备份</h2></div>
+    <div class="grid2">
+      <div><h3 data-i18n="hist">变更历史</h3><div id="hist" class="list"></div></div>
+      <div><h3 data-i18n="backups">daemon.json 备份</h3><div id="backups" class="list"></div></div>
+    </div>
+    <details class="adv">
+      <summary data-i18n="raw">当前 daemon.json（宿主）</summary>
+      <pre id="rawJson" class="log"></pre>
+    </details>
+  </section>
+
+  <footer>
+    <span data-i18n="footer">
+      提示：方式 B/C 会重启 dockerd，所有容器（含 HA 核心）会一起重启，通常 30–60 秒恢复。
+      所有写入都会先备份，校验失败会自动回滚。
+    </span>
+  </footer>
+</div>
+<script src="app.js"></script>
+</body>
+</html>

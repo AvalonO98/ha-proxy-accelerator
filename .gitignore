@@ -1,5 +1,5 @@
+# 本地测试临时目录
+.tmp-test/
 __pycache__/
 *.pyc
-/data/
-*.log
-.DS_Store
+.pytest_cache/

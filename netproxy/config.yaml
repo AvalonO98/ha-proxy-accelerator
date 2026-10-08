@@ -1,0 +1,96 @@
+name: "Net Proxy (网络代理)"
+version: "0.1.0"
+slug: "netproxy"
+description: >-
+  网络代理与镜像加速面板：总开关 + 三种代理方式（Docker 加速镜像 / 上游 HTTP-SOCKS5 代理与订阅 / 内置
+  WireGuard 出口）。直接作用于 Docker 守护进程，使 Home Assistant 系统更新与插件（Add-on）安装的镜像拉取走代理。
+url: "https://github.com/AvalonO98/ha-proxy-accelerator"
+# 预构建镜像：Supervisor 会拉取 <image>:<version>。
+# 必须用预构建镜像的原因：目标 HA 上 Docker Hub 不可达，而 Supervisor 本地构建
+# add-on 时需要从 Docker Hub 拉构建器镜像(docker:<ver>-cli)，本地构建必然失败。
+# 由 .github/workflows/build-netproxy.yml 构建并推送（多架构 manifest）。
+image: "ghcr.io/avalono98/ha-proxy-accelerator"
+arch:
+  - amd64
+  - aarch64
+init: false
+startup: application
+boot: auto
+ingress: true
+ingress_port: 8099
+ingress_entry: /
+panel_admin: true
+panel_icon: mdi:shield-network
+panel_title: "网络代理"
+# 需要操作宿主机的 dockerd 配置，所以必须进入宿主网络/PID 命名空间
+host_network: true
+host_pid: true
+# AppArmor 会拦截 setns(进入宿主命名空间)，必须关闭
+apparmor: false
+privileged:
+  - SYS_ADMIN
+  - NET_ADMIN
+  - NET_RAW
+  - DAC_READ_SEARCH
+# 读取 dockerd 实时配置(/info 里的 Registry Mirrors / Proxy)用于"真实生效"校验
+docker_api: true
+hassio_api: true
+ports:
+  8099/tcp: null
+ports_description:
+  8099/tcp: "Web UI（默认不发布；仅在 ingress 不可用时手动映射，无 HA 鉴权，请自行加防护）"
+watchdog: "http://[HOST]:[PORT:8099]/api/health"
+map:
+  - share:rw
+options:
+  enabled: false
+  mode: docker_mirror
+  mirrors:
+    - "https://docker.m.daocloud.io"
+    - "https://docker.1ms.run"
+  github_mirrors:
+    - "https://ghfast.top/"
+  upstream:
+    type: none
+    url: ""
+    username: ""
+    password: ""
+  subscription:
+    url: ""
+    name: ""
+  wireguard:
+    config: ""
+  kernel_url: ""
+  kernel_version: ""
+  dns:
+    - "223.5.5.5"
+    - "119.29.29.29"
+  auto_rollback: true
+  health_check_seconds: 300
+  apply_timeout_seconds: 180
+  log_level: info
+schema:
+  enabled: bool
+  mode: list(docker_mirror|upstream_proxy|wireguard)
+  mirrors:
+    - str
+  github_mirrors:
+    - str
+  upstream:
+    type: list(none|http|socks5)
+    url: str?
+    username: str?
+    password: password?
+  subscription:
+    url: str?
+    name: str?
+  wireguard:
+    config: str?
+  kernel_url: str?
+  kernel_version: str?
+  dns:
+    - str
+  auto_rollback: bool
+  health_check_seconds: int(30,3600)
+  apply_timeout_seconds: int(30,900)
+  log_level: list(trace|debug|info|notice|warning|error|fatal)

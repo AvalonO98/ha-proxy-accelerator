@@ -1,0 +1,5 @@
+# 统一换行：仓库里存 LF，避免 shell 脚本/Dockerfile 在容器里因 CRLF 执行失败
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.gz binary

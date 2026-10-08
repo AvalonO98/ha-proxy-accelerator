@@ -1,0 +1,61 @@
+configuration:
+  enabled:
+    name: Master switch
+    description: Turn the proxy pipeline on or off. Turning it off restores the original Docker daemon configuration.
+  mode:
+    name: Proxy mode
+    description: >-
+      docker_mirror = Docker registry mirror (hot reload, no HA downtime);
+      upstream_proxy = existing HTTP/SOCKS5 proxy or subscription (covers ghcr.io);
+      wireguard = built-in WireGuard tunnel as egress (mihomo userspace, no host routing changes).
+  mirrors:
+    name: Registry mirrors
+    description: >-
+      Docker Hub pull-through mirrors, free-form and fully custom (one per line). Only replaces
+      the registry-mirrors key; Docker Hub only.
+  github_mirrors:
+    name: GitHub acceleration prefixes
+    description: >-
+      Fully custom list. Used by the add-on when downloading the mihomo kernel or fetching from
+      GitHub: https://ghfast.top/ becomes https://ghfast.top/https://github.com/... . A template
+      containing {url} is also supported. Tried in order with fallback.
+  kernel_version:
+    name: mihomo kernel version
+    description: Leave empty for the latest release; fill in (e.g. v1.19.32) if the GitHub API is unreachable.
+  upstream:
+    name: Upstream proxy
+    type:
+      name: Upstream type
+    url:
+      name: Upstream URL
+      description: "e.g. http://192.168.1.10:7890 or socks5://user:pass@192.168.1.10:1080"
+    username:
+      name: Upstream username
+    password:
+      name: Upstream password
+  subscription:
+    name: Subscription
+    url:
+      name: Subscription URL
+      description: Clash/mihomo subscription URL. Fetched by the add-on and used as a proxy provider.
+    name:
+      name: Subscription profile name
+  wireguard:
+    name: WireGuard
+    config:
+      name: WireGuard config
+      description: Paste a standard WireGuard .conf ([Interface] + [Peer]); it is converted into a mihomo wireguard outbound.
+  dns:
+    name: DNS servers
+    description: DNS used by the mihomo core when resolving through the proxy.
+  auto_rollback:
+    name: Auto rollback
+    description: Automatically revert Docker daemon config and disable the switch when the proxy fails a health check.
+  health_check_seconds:
+    name: Health check window (seconds)
+    description: How long the proxy may stay unhealthy before auto rollback triggers.
+  apply_timeout_seconds:
+    name: Apply timeout (seconds)
+    description: How long to wait for dockerd to come back after a restart before rolling back.
+  log_level:
+    name: Log level

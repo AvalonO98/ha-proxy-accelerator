@@ -1,0 +1,56 @@
+configuration:
+  enabled:
+    name: 总开关
+    description: 打开或关闭代理链路。关闭时会恢复 Docker 守护进程的原始配置。
+  mode:
+    name: 代理方式
+    description: >-
+      docker_mirror = Docker 加速镜像（热加载，不中断 HA）；
+      upstream_proxy = 现成的 HTTP/SOCKS5 代理或订阅（可覆盖 ghcr.io）；
+      wireguard = 内置 WireGuard 隧道作为出口（mihomo 用户态实现，不改主机路由）。
+  mirrors:
+    name: 加速镜像地址
+    description: Docker Hub 加速镜像源，可自由增删自定义条目（每行一个）。只替换 registry-mirrors 这一个键，仅对 Docker Hub 生效。
+  github_mirrors:
+    name: GitHub 加速源
+    description: >-
+      完全自定义的列表。插件下载 mihomo 内核/访问 GitHub 时使用：
+      https://ghfast.top/ 会拼成 https://ghfast.top/https://github.com/... ；
+      也支持含 {url} 的模板。按顺序尝试并自动回退。
+  kernel_version:
+    name: mihomo 内核版本
+    description: 留空表示用最新版；若 GitHub API 不可达，可手填版本号（如 v1.19.32）。
+  upstream:
+    type:
+      name: 上游代理类型
+    url:
+      name: 上游代理地址
+      description: 例如 http://192.168.1.10:7890 或 socks5://192.168.1.10:1080
+    username:
+      name: 上游代理用户名
+    password:
+      name: 上游代理密码
+  subscription:
+    url:
+      name: 订阅地址
+      description: Clash/mihomo 订阅链接，由插件拉取后作为 proxy-provider 使用。
+    name:
+      name: 订阅配置名
+  wireguard:
+    config:
+      name: WireGuard 配置
+      description: 粘贴标准 WireGuard .conf（[Interface] + [Peer]），会自动转换为 mihomo 的 wireguard 出站。
+  dns:
+    name: DNS 服务器
+    description: mihomo 内核通过代理解析域名时使用的 DNS。
+  auto_rollback:
+    name: 自动回滚
+    description: 代理健康检查持续失败时，自动恢复 Docker 配置并关闭总开关。
+  health_check_seconds:
+    name: 健康检查容忍时长（秒）
+    description: 代理不可用持续超过该时长后触发自动回滚。
+  apply_timeout_seconds:
+    name: 应用超时（秒）
+    description: 重启 dockerd 后等待其恢复的最长时间，超时即回滚。
+  log_level:
+    name: 日志级别

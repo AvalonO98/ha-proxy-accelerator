@@ -1,0 +1,83 @@
+name: Build & push Net Proxy app image (ghcr)
+
+# 为什么必须走 CI 预构建镜像：
+#   目标 HA 上 Docker Hub 不可达，而 Supervisor 本地构建 add-on 时需要从
+#   Docker Hub 拉取构建器镜像（docker:<ver>-cli），因此本地构建必然失败。
+#   预构建镜像推到 ghcr.io（目标 HA 可直连）后，Supervisor 只需 pull，不再需要 Docker Hub。
+on:
+  push:
+    branches: [main]
+    paths:
+      - "netproxy/**"
+      - ".github/workflows/build-netproxy.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  # 部署时按最终选择调整（见 config.yaml 的 image 字段，两处必须一致）
+  IMAGE: ghcr.io/avalono98/ha-proxy-accelerator
+  VERSION: "0.1.0"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Home Assistant 官方基础镜像按架构分名，所以每个架构必须单独构建
+          - arch: amd64
+            platform: linux/amd64
+          - arch: aarch64
+            platform: linux/arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push (${{ matrix.arch }})
+        uses: docker/build-push-action@v6
+        with:
+          context: netproxy
+          file: netproxy/Dockerfile
+          platforms: ${{ matrix.platform }}
+          push: true
+          tags: ${{ env.IMAGE }}:${{ env.VERSION }}-${{ matrix.arch }}
+          build-args: |
+            BUILD_FROM=ghcr.io/home-assistant/${{ matrix.arch }}-base-python:3.12-alpine3.18
+
+  manifest:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create multi-arch manifest
+        run: |
+          docker buildx imagetools create \
+            -t "$IMAGE:$VERSION" \
+            -t "$IMAGE:latest" \
+            "$IMAGE:$VERSION-amd64" "$IMAGE:$VERSION-aarch64"
+
+      - name: Verify published tags
+        run: |
+          docker buildx imagetools inspect "$IMAGE:$VERSION"
