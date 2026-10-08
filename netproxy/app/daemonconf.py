@@ -264,7 +264,9 @@ def write_daemon_json(obj: dict) -> tuple:
     # 2) /etc 只读（HAOS）：写到可写位置再 bind mount 覆盖
     errors = []
     for store in STORE_CANDIDATES:
-        ok, m = hostops.write_text(hostops.hp(store), text, atomic=False)
+        eff = hostops.hp(store)
+        hostops.ensure_parent(eff)          # 新路径的父目录可能还不存在
+        ok, m = hostops.write_text(eff, text, atomic=False)
         if not ok:
             errors.append(f"{store}: 写入失败 {m}")
             continue

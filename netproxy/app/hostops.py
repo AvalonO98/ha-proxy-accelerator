@@ -255,6 +255,18 @@ def remove(path: str) -> Tuple[bool, str]:
         return False, str(e)
 
 
+def ensure_parent(path: str) -> Tuple[bool, str]:
+    """确保目标文件的父目录存在（宿主上也一样）。"""
+    if namespace_mode() == "host":
+        rc, _, err = sh_host('mkdir -p "$(dirname "$1")"', [path], timeout=15)
+        return (rc == 0), (err.strip() or "ok")
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        return True, "ok"
+    except Exception as e:
+        return False, f"{type(e).__name__}: {e}"
+
+
 def parent_writable(path: str) -> Tuple[bool, str]:
     """探测目标文件的父目录是否可写（决定能否落地配置）。"""
     parent = os.path.dirname(path)
