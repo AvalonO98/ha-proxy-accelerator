@@ -175,6 +175,29 @@ map: [share:rw]            # /share 用于手动放置 mihomo 内核与本地订
 > 请只在自己的 HA 上使用，不要把它暴露到公网。面板本身走 Home Assistant 的 Ingress 鉴权，
 > 默认不发布任何端口。
 
+### HAOS 的 /etc 是只读的（插件怎么落地配置）
+
+HAOS 的 rootfs 不可变，`/etc/docker/daemon.json` 是 OS 提供的只读文件，直接写会报
+`Read-only file system`。因此插件分两级落地：
+
+1. 先尝试**直接原子写**（适用于 `/etc` 可写的环境，例如 Supervised on Debian）；
+2. 只读时，把完整内容写到可写的持久位置，再用 **`mount --bind`** 覆盖
+   `/etc/docker/daemon.json`：
+
+   | 优先级 | 落地点 | 说明 |
+   |---|---|---|
+   | 1 | `/etc/udev/rules.d/netproxy-daemon.json` | HAOS 官方支持持久化 udev 规则的位置 |
+   | 2 | `/mnt/overlay/etc/docker/daemon.json` | hassos-overlay 持久层 |
+   | 3 | `/mnt/data/netproxy/daemon.json` | 数据分区，必然可写 |
+   | 4 | `/run/netproxy-daemon.json` | tmpfs，仅作兜底（重启即失） |
+
+**回滚就是 `umount`** —— HAOS 自带的不可变文件重新露出来，所以无论怎么折腾，
+OS 原始配置都不会被破坏。
+
+bind mount 不跨重启，因此插件启动时会**自动重新落地**（写文件是幂等的；
+并且用内核 `boot_id` 做闸门，同一次开机内最多触发一次"需要重启 dockerd"的落地，
+不会出现重启循环）。重启宿主后如果你希望镜像源立刻生效，等插件起来即可（几十秒内）。
+
 ### 方式 B/C 应用后 HA 没回来
 - 插件会在 3 分钟后由宿主脚本自动还原配置并重启 docker；
 - 若仍然不行：用 Samba 或 File editor 打开 `/config`，手动把 `daemon.json` 里的 `proxies` 段删掉；

@@ -1,5 +1,24 @@
 # 变更记录
 
+## 0.1.6
+
+**修复：HAOS 的 /etc 是只读的 → 改用 bind mount 落地 daemon.json（实机定位）**
+- 实机现象：写 daemon.json 报
+  `can't create /etc/docker/.daemon.json.netproxy.18296: Read-only file system`。
+  HAOS 的 rootfs 不可变，`/etc/docker/daemon.json`（内容是 `log-driver`/`log-opts`/
+  `data-root: /mnt/data/docker`/`bip`/`ipv6`）由 OS 提供且不可写。
+- 修复：写入策略改为两级——
+  1. 先尝试直接原子写（`/etc` 可写的环境，如 Supervised on Debian）；
+  2. 只读时把完整内容写到可写的持久位置（优先 `/etc/udev/rules.d/netproxy-daemon.json`，
+     其次 `/mnt/overlay/...`、`/mnt/data/netproxy/...`、`/run/...`），再用
+     `mount --bind` 覆盖 `/etc/docker/daemon.json`。
+  **回滚 = umount**，HAOS 自带的不可变文件会重新露出来，天然不会被破坏。
+- 新增**开机自愈**：bind mount 不跨重启，插件启动时会重新落地（写文件幂等，
+  且用内核 `boot_id` 做闸门，同一次开机内最多触发一次"需要重启 dockerd"的落地，
+  避免重启循环）。
+- 诊断增强：`/api/diag` 增加 bind mount 状态、候选落地路径、宿主挂载表与
+  `/etc` 可写性探测。
+
 ## 0.1.5
 
 **修复：补上 SYS_PTRACE，宿主文件系统才真正可达（实机定位）**

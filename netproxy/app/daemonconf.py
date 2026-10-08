@@ -28,6 +28,19 @@ DAEMON_JSON = "/etc/docker/daemon.json"
 MANAGED_KEYS = ("registry-mirrors", "proxies")
 PROXY_KEYS = ("http-proxy", "https-proxy", "no-proxy", "ftp-proxy", "all-proxy")
 
+#: HAOS 上 /etc 位于只读的不可变 rootfs（HAOS 自带的 /etc/docker/daemon.json
+#: 就是那个不可变文件），直接写会得到 "Read-only file system"。
+#: 社区通行做法：把真正的配置放到可写的持久位置，再用 bind mount 覆盖到
+#: /etc/docker/daemon.json。按"持久性优先"排序，逐个尝试：
+STORE_CANDIDATES = (
+    "/etc/udev/rules.d/netproxy-daemon.json",   # HAOS 明确支持持久化 udev 规则的位置
+    "/mnt/overlay/etc/docker/daemon.json",      # hassos-overlay 持久层
+    "/mnt/data/netproxy/daemon.json",           # 数据分区，必然可写
+    "/run/netproxy-daemon.json",                # tmpfs；重启即失，仅作兜底
+)
+
+_AWK_MOUNTED = """awk -v p="$1" '$2==p{f=1} END{exit !f}' /proc/mounts"""
+
 HOST_APPLY_SCRIPT = "/run/netproxy-apply.sh"
 HOST_APPLY_BACKUP = "/run/netproxy-daemon-backup.json"
 HOST_APPLY_ABSENT = "/run/netproxy-daemon-absent"
@@ -195,19 +208,89 @@ def load_backup(bid: str) -> Optional[dict]:
 # --------------------------------------------------------------------------- #
 # 写（底层，不含重启）
 # --------------------------------------------------------------------------- #
+def is_mounted(path: str = DAEMON_JSON) -> bool:
+    rc, _, _ = hostops.sh_host(_AWK_MOUNTED, [hostops.hp(path)], timeout=15)
+    return rc == 0
+
+
+def mount_candidates() -> list:
+    return list(STORE_CANDIDATES)
+
+
+def _readonly_error(msg: str) -> bool:
+    m = (msg or "").lower()
+    return "read-only file system" in m or "readonly" in m or "erofs" in m
+
+
+def _bind_mount(src: str, dst: str) -> tuple:
+    if is_mounted(dst):
+        hostops.run_host(["umount", hostops.hp(dst)], timeout=20)
+    rc, out, err = hostops.run_host(["mount", "--bind", hostops.hp(src), hostops.hp(dst)], timeout=25)
+    if rc != 0:
+        return False, ((err or out).strip() or f"rc={rc}")[:250]
+    if not is_mounted(dst):
+        return False, "mount 命令返回成功，但 /proc/mounts 里没有该挂载点"
+    return True, "ok"
+
+
+def release_bind_mount(dst: str = DAEMON_JSON) -> tuple:
+    if not is_mounted(dst):
+        return True, "未挂载"
+    rc, out, err = hostops.run_host(["umount", hostops.hp(dst)], timeout=20)
+    if rc != 0:
+        return False, ((err or out).strip() or f"rc={rc}")[:250]
+    return True, "ok"
+
+
 def write_daemon_json(obj: dict) -> tuple:
+    """写入 daemon.json。返回 (ok, detail)。
+
+    detail 形如 "direct" 或 "bind:/etc/udev/rules.d/netproxy-daemon.json"，
+    调用方据此判断是否需要 bind mount 与如何回滚。
+    """
     ok, msg = validate(obj)
     if not ok:
         return False, f"拒绝写入非法配置：{msg}"
-    if obj == {}:
-        # 空对象是合法 JSON，但 Docker 更希望文件不存在；这里显式保留 {}
-        pass
     text = json.dumps(obj, ensure_ascii=False, indent=2) + "\n"
-    return hostops.write_text(target_path(), text, atomic=True)
+
+    # 1) 直接原子写：/etc 可写的环境（例如 Supervised on Debian）走这条
+    ok, msg = hostops.write_text(target_path(), text, atomic=True)
+    if ok:
+        return True, "direct"
+
+    if not _readonly_error(msg):
+        return False, msg
+
+    # 2) /etc 只读（HAOS）：写到可写位置再 bind mount 覆盖
+    errors = []
+    for store in STORE_CANDIDATES:
+        ok, m = hostops.write_text(hostops.hp(store), text, atomic=False)
+        if not ok:
+            errors.append(f"{store}: 写入失败 {m}")
+            continue
+        ok2, m2 = _bind_mount(store, DAEMON_JSON)
+        if not ok2:
+            errors.append(f"{store}: bind mount 失败 {m2}")
+            continue
+        log(f"已用 bind mount 覆盖 {DAEMON_JSON} → {store}", "notice", "daemon.json")
+        return True, f"bind:{store}"
+
+    return False, ("/etc/docker/daemon.json 位于只读文件系统，且没有任何可写的落地点可用："
+                   + " ｜ ".join(errors[:4]))
 
 
 def restore_raw(raw: Optional[str], existed: bool) -> tuple:
-    """把 daemon.json 恢复成原始状态（不存在则删除）。"""
+    """把 daemon.json 恢复成原始状态。
+
+    bind mount 模式下"恢复"就是卸载挂载点——HAOS 自带的那个不可变文件会重新露出来，
+    它本来就是原始内容，所以这种方式天然安全（不会破坏 OS 文件）。
+    """
+    if is_mounted(DAEMON_JSON):
+        ok, msg = release_bind_mount(DAEMON_JSON)
+        if not ok:
+            return False, f"卸载 {DAEMON_JSON} 的 bind mount 失败：{msg}"
+        log(f"已卸载 {DAEMON_JSON} 的 bind mount，露出 OS 原始配置", "notice", "daemon.json")
+        return True, "ok"
     if not existed:
         return hostops.remove(target_path())
     if raw is None:

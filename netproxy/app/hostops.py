@@ -31,6 +31,7 @@ _ALLOWED_BIN = {
     "sh", "cat", "ls", "mv", "cp", "rm", "mkdir", "test", "stat", "date",
     "systemctl", "systemd-run", "docker", "dockerd", "kill", "chmod", "sync",
     "ifconfig", "ip", "ping", "nc", "pgrep", "pidof", "reboot", "sleep", "tr",
+    "mount", "umount", "findmnt", "awk", "grep", "readlink", "df",
 }
 
 

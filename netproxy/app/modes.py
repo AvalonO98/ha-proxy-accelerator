@@ -211,9 +211,11 @@ def apply(cfg: dict, job: Optional[dict] = None) -> dict:
                   pre_existed=cur.get("existed"), pending=need_restart, mode=cfg["mode"])
 
     # ---- 3. 写 ----
-    ok, msg = daemonconf.write_daemon_json(new_obj)
+    ok, wmsg = daemonconf.write_daemon_json(new_obj)
     if not ok:
-        raise RuntimeError(f"写入 daemon.json 失败：{msg}")
+        raise RuntimeError(f"写入 daemon.json 失败：{wmsg}")
+    if wmsg.startswith("bind:"):
+        log(f"HAOS 的 /etc 只读，已改用 bind mount 落地：{wmsg[5:]}", "notice", "daemon.json")
 
     # ---- 4. 生效 ----
     if need_restart:
@@ -249,16 +251,16 @@ def apply(cfg: dict, job: Optional[dict] = None) -> dict:
     _save_applied(settings.load_state(), active=cfg["enabled"], original=original,
                   backup_id=backup_id, expected=expected, plan=plan,
                   pre_raw=cur.get("raw"), pre_existed=cur.get("existed"),
-                  pending=False, mode=cfg["mode"])
+                  pending=False, mode=cfg["mode"], write_mode=wmsg)
     settings.push_history("apply", f"方式 {cfg['mode']} 已生效（热加载）",
-                          {"changed": changed, "expected": expected})
+                          {"changed": changed, "expected": expected, "write": wmsg})
     return {"state": "applied", "message": "已生效并校验通过", "changed": changed,
-            "verify": v, "expected": expected}
+            "verify": v, "expected": expected, "write_mode": wmsg}
 
 
 def _save_applied(st: dict, *, active: bool, original: dict, backup_id: Optional[str],
                   expected: dict, plan: Plan, pre_raw, pre_existed, pending: bool,
-                  mode: str) -> None:
+                  mode: str, write_mode: str = "") -> None:
     st["applied"] = {
         "active": bool(active),
         "mode": mode,
@@ -270,9 +272,59 @@ def _save_applied(st: dict, *, active: bool, original: dict, backup_id: Optional
         "pre_raw": pre_raw,
         "pre_existed": pre_existed,
         "pending_verify": bool(pending),
+        "write_mode": write_mode,
         "applied_at": time.time(),
     }
     settings.save_state(st)
+
+
+# --------------------------------------------------------------------------- #
+# 开机自愈
+# --------------------------------------------------------------------------- #
+def _boot_id() -> str:
+    try:
+        with open("/proc/sys/kernel/random/boot_id", "r") as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
+def boot_reapply(cfg: dict) -> None:
+    """插件（随 HA/宿主重启）启动后，把配置重新落地。
+
+    为什么必须做：HAOS 的 /etc 只读，我们是用 bind mount 覆盖 daemon.json 的，
+    而 bind mount 不跨重启 —— 重启后 dockerd 又会用回 OS 自带的配置。
+
+    为什么不会重启循环：写文件是幂等的；只有"文件内容确实变了"才会触发重启，
+    落地完成后再次检查就是"无变化"。另外这里用内核 boot_id 做闸门，同一次开机内
+    最多触发一次"需要重启 dockerd"的落地。
+    """
+    if not hostops.host_available():
+        return
+    if not cfg.get("enabled"):
+        if daemonconf.is_mounted():
+            daemonconf.release_bind_mount()
+            log("总开关关闭，已卸载 daemon.json 的 bind mount，恢复 OS 原始配置", "notice", "boot")
+        return
+
+    st = settings.load_state()
+    boot_id = _boot_id()
+    need_restart_mode = cfg.get("mode") in ("upstream_proxy", "wireguard")
+    if need_restart_mode and st.get("last_apply_boot") == boot_id:
+        live = dockerapi.summarize()
+        if not (live.get("http_proxy") or live.get("https_proxy")):
+            log("本次开机已尝试过需要重启 dockerd 的落地，跳过以避免重启循环；"
+                "如需立即生效请在面板点「应用并生效」。", "warning", "boot")
+            return
+
+    try:
+        res = apply(cfg)
+        st = settings.load_state()
+        st["last_apply_boot"] = boot_id
+        settings.save_state(st)
+        log(f"开机自动落地：{res.get('state')} · {res.get('message', '')}", "notice", "boot")
+    except Exception as e:
+        log(f"开机自动落地失败：{type(e).__name__}: {e}（可在面板手动应用）", "error", "boot")
 
 
 # --------------------------------------------------------------------------- #
@@ -356,6 +408,9 @@ def status(cfg: dict) -> dict:
             "ok": cur.get("ok"),
             "error": cur.get("error"),
             "data": cur.get("data"),
+            "bind_mounted": daemonconf.is_mounted(),
+            "write_mode": applied.get("write_mode") or "",
+            "store_candidates": daemonconf.mount_candidates(),
             "managed_original": daemonconf.original_managed(cur.get("data") or {}) if cur.get("ok") else None,
         },
         "desired": ({"registry_mirrors": plan.registry_mirrors, "proxies": plan.proxies,

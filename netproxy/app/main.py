@@ -397,6 +397,8 @@ def _diag(cfg: dict) -> dict:
         "dockerd_pids": hostops.find_pids("dockerd"),
         "docker": dockerapi.summarize(),
         "docker_socket": dockerapi.socket_path(),
+        "daemon_json_mounted": daemonconf.is_mounted(),
+        "daemon_json_store": daemonconf.mount_candidates(),
         "supervisor_self": {k: v for k, v in supervisor_api.self_info().items()
                             if k in ("protected", "host_pid", "host_network", "docker_api",
                                      "version", "state", "privileged", "apparmor")},
@@ -417,7 +419,9 @@ def _probe() -> dict:
         ("id", ["sh", "-c", "id"]),
         ("pwd_host", ["sh", "-c", "pwd"]),
         ("ls_etc_docker", ["sh", "-c", "ls -la /etc/docker 2>&1"]),
-        ("systemctl", ["sh", "-c", "command -v systemctl systemd-run docker pgrep 2>&1"]),
+        ("systemctl", ["sh", "-c", "command -v systemctl systemd-run docker pgrep mount umount 2>&1"]),
+        ("mounts", ["sh", "-c", "grep -E 'docker' /proc/mounts 2>&1 | head -5"]),
+        ("etc_writable", ["sh", "-c", "(touch /etc/docker/.w 2>&1 && echo WRITABLE && rm -f /etc/docker/.w) || echo READONLY"]),
         ("os_release", ["sh", "-c", "head -3 /etc/os-release 2>&1"]),
     ):
         rc, o, e = hostops.run_host(args, timeout=15)
@@ -445,6 +449,11 @@ def main() -> None:
         modes.recover_on_boot(cfg)
     except Exception as e:
         log(f"启动恢复流程异常：{type(e).__name__}: {e}", "error", "boot")
+
+    try:
+        modes.boot_reapply(settings.load_config())
+    except Exception as e:
+        log(f"开机自动落地异常：{type(e).__name__}: {e}", "error", "boot")
 
     health.Watchdog().start()
 
