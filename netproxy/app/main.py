@@ -19,7 +19,8 @@ import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from . import daemonconf, dockerapi, health, hostops, jobs, mihomo, modes, settings, wg
+from . import (daemonconf, dockerapi, health, hostops, jobs, mihomo, modes,
+               settings, supervisor_api, wg)
 from .logbus import LOG, log
 
 APP_DIR = os.environ.get("NETPROXY_APP", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -218,6 +219,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/diag" and method == "GET":
             return self._json(_diag(cfg))
 
+        if path == "/api/self-heal" and method == "POST":
+            return self._json({"job": jobs.submit("self-heal", _do_self_heal)})
+
         if path == "/api/wg/parse" and method == "POST":
             body = self._body()
             return self._json({"result": wg.summarize(body.get("config") or "")})
@@ -350,6 +354,32 @@ def _do_pull_test(image: str, job) -> dict:
     return {"state": "done", "message": f"拉取成功：{msg}", "tail": lines[-8:]}
 
 
+def _do_self_heal(job) -> dict:
+    """关闭自己的保护模式并重启插件。
+
+    保护模式是 Supervisor 的用户级设置（插件无法在 config.yaml 里声明），默认开启，
+    而它会让 host_pid / docker_api 全部失效 —— 于是必须由插件调用 Supervisor 的
+    self 接口关掉它，再重启自己让新的容器参数生效。
+    """
+    if not supervisor_api.available():
+        raise RuntimeError("没有 SUPERVISOR_TOKEN，无法调用 Supervisor API")
+    info = supervisor_api.self_info()
+    if info.get("protected") is False:
+        log("保护模式已经是关闭状态；若仍无宿主访问，请检查 host_pid/privileged 是否生效，"
+            "必要时卸载后重新安装插件。", "warning", "self-heal")
+    ok, msg = supervisor_api.disable_protection()
+    if not ok:
+        raise RuntimeError("关闭保护模式失败：" + msg +
+                           "（可在插件页面手动关闭「保护模式」后重启插件）")
+    log("保护模式已关闭，正在重启插件以让新权限生效…", "notice", "self-heal")
+    try:
+        supervisor_api.restart_self()
+    except Exception as e:
+        log(f"重启请求异常（预期内，容器会被 Supervisor 重启）：{e}", "warning", "self-heal")
+    return {"state": "restarting",
+            "message": "保护模式已关闭，插件正在重启；约 10 秒后重新打开面板，宿主访问即可用。"}
+
+
 def _diag(cfg: dict) -> dict:
     """给排查用的全量现场（不隐去密钥，但仅限内网/ingress 访问）。"""
     cur = daemonconf.read_current()
@@ -367,6 +397,9 @@ def _diag(cfg: dict) -> dict:
         "dockerd_pids": hostops.find_pids("dockerd"),
         "docker": dockerapi.summarize(),
         "docker_socket": dockerapi.socket_path(),
+        "supervisor_self": {k: v for k, v in supervisor_api.self_info().items()
+                            if k in ("protected", "host_pid", "host_network", "docker_api",
+                                     "version", "state", "privileged", "apparmor")},
         "kernel": mihomo.status(),
         "config": cfg,
         "state": settings.load_state(),

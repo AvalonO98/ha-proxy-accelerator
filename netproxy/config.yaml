@@ -1,5 +1,5 @@
 name: "Net Proxy (网络代理)"
-version: "0.1.1"
+version: "0.1.2"
 slug: "netproxy"
 description: >-
   网络代理与镜像加速面板：总开关 + 三种代理方式（Docker 加速镜像 / 上游 HTTP-SOCKS5 代理与订阅 / 内置
@@ -27,13 +27,15 @@ host_network: true
 host_pid: true
 # AppArmor 会拦截 setns(进入宿主命名空间)，必须关闭
 apparmor: false
-# 必须关闭 Supervisor 的"保护模式"：
-#   supervisor/docker/app.py 里，host_pid 与 docker_api 只在 `not protected` 时才生效
-#   （pid_mode: return "host" if not self.app.protected and self.app.host_pid else None）。
-#   默认 protected=True，会导致插件拿不到宿主 PID 命名空间，也无法读写宿主
-#   /etc/docker/daemon.json —— 那样本插件就完全失效。这里声明默认关闭，
-#   用户仍可在插件页面重新打开（打开即失效，面板会明确提示原因）。
-protected: false
+# 注意：Supervisor 的「保护模式」**无法由插件自己声明**。
+#   ATTR_PROTECTED 只存在于 SCHEMA_APP_USER（用户持久化数据），默认 True；
+#   而 supervisor/docker/app.py 里 host_pid 与 docker_api 只在 `not protected` 时才应用：
+#       def pid_mode(self): return "host" if not self.app.protected and self.app.host_pid else None
+#   因此保护模式默认开启时，插件拿不到宿主 PID 命名空间、也没有 docker socket，
+#   方式 A/B/C 全部失效。解决办法（二者其一）：
+#     1) 插件面板上的「一键修复权限」→ 调用 /addons/self/security 关闭保护模式并重启；
+#     2) 手动在插件页面关闭「保护模式」后重启插件。
+protected: false   # 仅作备注：该键不在 add-on config schema 中，会被 Supervisor 忽略
 privileged:
   - SYS_ADMIN
   - NET_ADMIN

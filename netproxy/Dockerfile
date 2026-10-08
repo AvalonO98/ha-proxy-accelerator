@@ -21,6 +21,14 @@ ENV NETPROXY_DATA=/data \
     PYTHONDONTWRITEBYTECODE=1 \
     LANG=C.UTF-8
 
+# ⚠️ 必须清空基础镜像的 ENTRYPOINT。
+# HA 官方基础镜像的 ENTRYPOINT 是 s6-overlay 的 /init，而 s6-overlay-suexec 只在
+# **PID 1** 时才能运行；本插件声明了 host_pid（共享宿主 PID 命名空间），容器进程
+# 不再是 PID 1，于是 s6 会直接以退出码 100 崩掉（实机日志：
+# "s6-overlay-suexec: fatal: can only run as pid 1"）。
+# 本插件不需要 s6/bashio，直接让 /run.sh 作为主进程即可。
+ENTRYPOINT []
+
 EXPOSE 8099
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \

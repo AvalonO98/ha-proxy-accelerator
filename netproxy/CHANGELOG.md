@@ -1,5 +1,24 @@
 # 变更记录
 
+## 0.1.2
+
+实机验证（HAOS + x86_64，关闭保护模式后）继续修复：
+
+**修复**
+- **容器启动即崩（退出码 100）**：HA 官方基础镜像的 ENTRYPOINT 是 s6-overlay 的 `/init`，
+  而 `s6-overlay-suexec` 只允许 PID 1 运行；启用 `host_pid` 后进程不再是 PID 1，
+  实测日志 `s6-overlay-suexec: fatal: can only run as pid 1` → 插件无法启动。
+  Dockerfile 现在显式 `ENTRYPOINT []`，由 `/run.sh` 直接作为主进程（插件不需要 s6/bashio）。
+- **保护模式无法由插件声明**：核对 Supervisor 源码后确认 `protected` 只存在于
+  `SCHEMA_APP_USER`（用户持久化），写在 `config.yaml` 里会被忽略；而保护模式开启时
+  `host_pid` / `docker_api` 均不生效（`supervisor/docker/app.py`），插件彻底不可用。
+  新增 **一键修复**：`POST /addons/self/security {"protected": false}` +
+  `POST /addons/self/restart`，面板红色横幅上直接可点（也可在插件页面手动关闭后重启）。
+
+**诊断**
+- `/api/diag` 增加 `supervisor_self`（来自 Supervisor 的 self 信息），便于一眼看出
+  保护模式/host_pid/docker_api 是否真的生效。
+
 ## 0.1.1
 
 真实 HAOS（HAOS + x86_64，Docker Hub 不可达）实机验证后修复：

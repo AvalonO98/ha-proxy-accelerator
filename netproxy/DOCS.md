@@ -130,22 +130,27 @@ Supervisor ──► dockerd ──► ghcr.io / registry-1.docker.io
 
 ### 面板显示「拿不到宿主机文件系统访问权限」
 
-**最常见原因是 Supervisor 的「保护模式」还开着。** 保护模式下 Supervisor 不会把
-`host_pid` 与 `docker_api` 应用到容器（源码 `supervisor/docker/app.py`：
+**原因：Supervisor 的「保护模式」还开着。** 这不是插件能自己声明的设置——
+`protected` 只存在于 Supervisor 的用户数据 schema（`SCHEMA_APP_USER`），写在 `config.yaml`
+里会被忽略；而保护模式下 Supervisor 不会把 `host_pid` 与 `docker_api` 应用到容器
+（`supervisor/docker/app.py`：`return "host" if not self.app.protected and self.app.host_pid else None`），
+于是插件拿不到宿主 PID 命名空间，读写宿主 `/etc/docker/daemon.json` 全部失效。
 
-```python
-def pid_mode(self):
-    if not self.app.protected and self.app.host_pid:
-        return "host"
-```
+两种修法，任选其一：
 
-），于是插件拿不到宿主 PID 命名空间，读写宿主 `/etc/docker/daemon.json` 全部失效。
+1. **一键修复（推荐）**：面板上红色横幅里点「一键修复权限（关闭保护模式并重启插件）」。
+   插件会调用 Supervisor 的 `POST /addons/self/security {"protected": false}`，
+   再 `POST /addons/self/restart` 重启自己使新参数生效。
+2. **手动**：设置 → 加载项 → Net Proxy → 关闭「保护模式」→ 重启插件。
 
-本插件已在 `config.yaml` 里声明 `protected: false`，安装后默认就是关闭状态；如果面板仍报这个错：
+重启后面板首页的「宿主访问能力」应显示 `host:host`，且不再有红色横幅。
 
-1. 打开插件页面（设置 → 加载项 → Net Proxy），在「保护模式」处确认它是**关闭**的；
-2. 关闭后**重启插件**（保护模式只在容器创建时生效）；
-3. 面板首页的「宿主访问能力」应变为 `host:host` 且不再有红色横幅。
+> 为什么服务进程不是 s6？
+> HA 官方基础镜像的 ENTRYPOINT 是 s6-overlay 的 `/init`，而 `s6-overlay-suexec` **只允许
+> PID 1 运行**；本插件声明了 `host_pid`（共享宿主 PID 命名空间）后不再是 PID 1，s6 会直接
+> 以退出码 100 崩溃（实机日志：`s6-overlay-suexec: fatal: can only run as pid 1`）。
+> 因此 Dockerfile 里显式写了 `ENTRYPOINT []`，让 `/run.sh` 直接作为主进程 —— 插件不需要
+> s6/bashio。
 
 插件需要的完整权限如下（`config.yaml` 已声明）：
 
@@ -153,10 +158,10 @@ def pid_mode(self):
 host_network: true         # 与宿主共享网络，本地代理监听 127.0.0.1 供 dockerd 使用
 host_pid: true             # 与宿主共享 PID 命名空间 → 可发 SIGHUP、可直接 nsenter
 apparmor: false            # AppArmor 会拦截 setns(进入宿主命名空间)
-protected: false           # 否则 host_pid / docker_api 不生效
 privileged: [SYS_ADMIN, NET_ADMIN, NET_RAW, DAC_READ_SEARCH]
 docker_api: true           # 读 dockerd 实时配置(/info)，用于"真实生效"校验
 map: [share:rw]            # /share 用于手动放置 mihomo 内核与本地订阅文件
+# 另需：保护模式 = 关闭（见上，插件无法自行声明，但可在面板上一键关闭）
 ```
 
 > 安全提醒：这些权限等价于宿主机 root（本插件本来就要改 dockerd 配置）。
