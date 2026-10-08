@@ -38,64 +38,84 @@ def _nsenter_path() -> Optional[str]:
     return shutil.which("nsenter")
 
 
-#: 只在"真正的宿主机根文件系统"里才存在的标记
-_HOST_MARKERS = ("/etc/hassos-release", "/etc/hassos-config", "/usr/lib/systemd/systemd", "/run/hassio-hc")
+#: 只在"真正的宿主机根文件系统"里才存在的标记（作为 os-release 比较之外的兜底）
+_HOST_MARKERS = ("/etc/hassos-release", "/etc/hassos-config", "/usr/lib/systemd/systemd",
+                 "/run/hassio-hc", "/etc/systemd/system.conf")
+
+#: 最近一次宿主访问探测结果，供面板展示原因
+_LAST_PROBE = {"ok": None, "detail": ""}
 
 
-def _host_marker_via_ns() -> Optional[str]:
+def _self_os_release() -> str:
+    try:
+        with open("/etc/os-release", "r", encoding="utf-8", errors="replace") as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
+def _nsenter_probe() -> Tuple[bool, str]:
+    """功能性验证：是否真的能进入宿主机文件系统。
+
+    为什么不能偷懒（都是实测踩出来的坑）：
+
+    1. 只看 `nsenter -t 1 -m -- true` 的返回值不够。若 host_pid 没生效
+       （Supervisor 保护模式下不会加 `--pid=host`），PID 1 就是本容器自己的 init，
+       setns 到"自己"的 mount namespace 永远成功 —— 探测会误判为有宿主访问，
+       随后所有写入都落在容器内部，等于什么都没改却以为改成功了。
+    2. 也不能用 `/proc/1/root/...` 判断。读取别的进程的 `/proc/PID/root` 需要
+       ptrace 权限，容器里没有 SYS_PTRACE 时会 EACCES，同样误判。
+    3. 最可靠的做法：直接比较「进入 PID 1 的 mount 命名空间后读到的 /etc/os-release」
+       与容器自己的 /etc/os-release。不同 → 确实看到了宿主根文件系统。
+    """
     ns = _nsenter_path()
     if not ns:
-        return None
+        return False, "容器内没有 nsenter（busybox/util-linux 都行，基础镜像应自带）"
+    try:
+        r = subprocess.run(
+            [ns, "-t", str(_GLOBAL_PID1), "-m", "--", "cat", "/etc/os-release"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10,
+        )
+    except Exception as e:
+        return False, f"nsenter 执行失败：{type(e).__name__}: {e}"
+    if r.returncode != 0:
+        err = (r.stderr or b"").decode("utf-8", "replace").strip()[:200]
+        return False, f"nsenter 无法进入宿主命名空间：{err or 'rc=' + str(r.returncode)}"
+
+    host_os = (r.stdout or b"").decode("utf-8", "replace").strip()
+    self_os = _self_os_release()
+    if host_os and host_os != self_os:
+        first = host_os.splitlines()[0] if host_os.splitlines() else "host"
+        return True, f"宿主根文件系统可见（{first}）"
+
+    # 兜底：宿主标记文件（有些宿主 /etc/os-release 与容器同名但内容相同的极端情况）
     for m in _HOST_MARKERS:
         try:
-            r = subprocess.run([ns, "-t", str(_GLOBAL_PID1), "-m", "--", "test", "-e", m],
-                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
-            if r.returncode == 0:
-                return m
+            rr = subprocess.run([ns, "-t", str(_GLOBAL_PID1), "-m", "--", "test", "-e", m],
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=8)
+            if rr.returncode == 0:
+                return True, f"宿主根文件系统可见（命中宿主标记 {m}）"
         except Exception:
             continue
-    return None
 
-
-def _pid1_is_host() -> bool:
-    """判断 PID 1 是否真的是宿主机 init。
-
-    这是踩过的坑：宿主访问**不能**只用"nsenter 是否成功"来判断。
-    若 host_pid 没生效（典型原因：插件处于 Supervisor 的**保护模式**，
-    Supervisor 只在 `not protected and host_pid` 时才加 `--pid=host`），
-    那么 PID 1 就是本容器自己的 init，`nsenter -t 1 -m` 会"成功"地进入
-    **本容器自己的** mount namespace —— 于是探测误判为有宿主访问，
-    接着所有写入都会落到容器内部，等于什么都没改却以为改成功了。
-    """
-    try:
-        with open("/proc/1/root/etc/os-release", "r", encoding="utf-8", errors="replace") as f:
-            pid1_os = f.read().strip()
-        with open("/etc/os-release", "r", encoding="utf-8", errors="replace") as f:
-            self_os = f.read().strip()
-    except OSError:
-        # 读不到 PID1 的 root（没有 host_pid 时通常仍可读，但保守起见先看 systemd）
-        return os.path.exists("/proc/1/root/usr/lib/systemd/systemd")
-    if pid1_os and pid1_os == self_os:
-        return False   # 与自身完全相同 → 没共享宿主 PID 命名空间
-    return True
+    return False, ("进入的是本容器自己的 mount namespace（PID 1 与自身同根）——"
+                   "通常说明 host_pid 未生效：请确认已关闭 Supervisor 的「保护模式」")
 
 
 def _nsenter_works() -> bool:
-    ns = _nsenter_path()
-    if not ns:
+    ok, detail = _nsenter_probe()
+    _LAST_PROBE["ok"] = ok
+    _LAST_PROBE["detail"] = detail
+    return ok
+
+
+def host_pid_shared() -> bool:
+    """粗略判断是否与宿主共享 PID 命名空间（权威判定仍是 _nsenter_probe）。"""
+    pid1 = _read_local("/proc/1/comm")
+    if not pid1:
         return False
-    if not _pid1_is_host():
-        return False
-    if not _host_marker_via_ns():
-        return False
-    try:
-        r = subprocess.run(
-            [ns, "-t", str(_GLOBAL_PID1), "-m", "--", "true"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10,
-        )
-        return r.returncode == 0
-    except Exception:
-        return False
+    return pid1 not in ("s6-svscan", "s6-supervise", "s6-supervise-init", "init", "tini",
+                        "python", "python3", "sh", "bash", "dumb-init")
 
 
 def namespace_mode() -> str:
@@ -115,6 +135,8 @@ def reset_mode_cache() -> None:
     global _mode
     with _mode_lock:
         _mode = None
+        _LAST_PROBE["ok"] = None
+        _LAST_PROBE["detail"] = ""
 
 
 def hp(path: str) -> str:
@@ -292,26 +314,20 @@ def signal_pid(pid: int, sig: int) -> Tuple[bool, str]:
 def capability_report(paths: Sequence[str] = ()) -> dict:
     """能力探测：面板首页展示"能不能真正落地"。"""
     mode = namespace_mode()
-    pid1 = _read_local("/proc/1/comm")
+    pid1 = _read_local("/proc/1/comm") or "?"
     reason = ""
     if mode != "host":
+        reason = _LAST_PROBE.get("detail") or "宿主访问不可用"
         if not _nsenter_path():
             reason = "容器里没有 nsenter"
-        elif not _pid1_is_host():
-            reason = ("未与宿主机共享 PID 命名空间：插件很可能处于 Supervisor 的**保护模式**。"
-                      "保护模式下 Supervisor 不会应用 host_pid / docker_api（见 supervisor/docker/app.py）。"
-                      "本插件在 config.yaml 里声明了 protected: false，若仍是保护模式，"
-                      "请在插件页面把「保护模式」关掉后重启插件。")
-        else:
-            reason = "nsenter 无法进入宿主 mount 命名空间"
     rep = {
         "namespace_mode": mode,
         "host_access": mode == "host",
         "reason": reason,
-        "pid1": pid1 or "?",
+        "pid1": pid1,
         "nsenter": _nsenter_path() or "",
-        "host_pid_shared": _pid1_is_host() if _nsenter_path() else False,
-        "host_marker": _host_marker_via_ns() or "",
+        "host_pid_shared": host_pid_shared(),
+        "probe_detail": _LAST_PROBE.get("detail") or "",
         "paths": {},
     }
     for p in paths:

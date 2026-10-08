@@ -1,5 +1,19 @@
 # 变更记录
 
+## 0.1.4
+
+**修复：宿主访问探测的真实误判（实机定位）**
+- 实机现象：`protected: false` + `host_pid` + `docker_api` 全部生效（`pid1=systemd`、
+  能看到 `dockerd` PID、能读 dockerd 实时配置），但插件仍报告 `host_access: false`，
+  于是 apply 直接以「当前模式：local」失败。
+- 根因：探测用 `/proc/1/root/etc/os-release` 判断"PID 1 的根文件系统是不是宿主"。
+  但读取别的进程的 `/proc/PID/root` 需要 **ptrace 权限**，容器里没有 `SYS_PTRACE`
+  时返回 `EACCES`，于是被判成"没有共享 PID 命名空间"。
+- 改为**功能性验证**：执行 `nsenter -t 1 -m -- cat /etc/os-release`，把它与容器自己的
+  `/etc/os-release` 比较 —— 不同就说明确实进入了宿主根文件系统（另附宿主标记文件兜底）。
+  这条判据同时覆盖了"保护模式导致 host_pid 未生效"和"nsenter 失败"两种情况，
+  并把原因如实写进 `capability.reason` 供面板显示。
+
 ## 0.1.3
 
 **修复（0.1.2 的修法被证明无效，这次是从 Supervisor 源码定位）**
