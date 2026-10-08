@@ -1,5 +1,17 @@
 # 变更记录
 
+## 0.1.5
+
+**修复：补上 SYS_PTRACE，宿主文件系统才真正可达（实机定位）**
+- 实机现象：`host_pid` 已生效（`pid1=systemd`、`host_pid_shared=true`、能在 /proc 里
+  看到宿主 `dockerd` PID、能通过 docker socket 读 dockerd 实时配置），但
+  `nsenter -t 1 -m` 仍然失败：
+  `nsenter: can't open '/proc/1/ns/mnt': Permission denied`
+- 根因：打开别的进程的 `/proc/PID/ns/mnt` 走的是 **ptrace 权限检查**
+  （内核 YAMA `ptrace_scope`，HAOS 默认开启），仅 `SYS_ADMIN` 不足以通过；
+  之前用 `/proc/1/root/...` 探测时遇到的 `EACCES` 也是同一个原因。
+- 修复：`privileged` 增加 **`SYS_PTRACE`**。至此方式 A/B/C 的宿主侧读写才真正打通。
+
 ## 0.1.4
 
 **修复：宿主访问探测的真实误判（实机定位）**

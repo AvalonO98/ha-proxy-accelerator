@@ -161,7 +161,11 @@ Supervisor ──► dockerd ──► ghcr.io / registry-1.docker.io
 host_network: true         # 与宿主共享网络，本地代理监听 127.0.0.1 供 dockerd 使用
 host_pid: true             # 与宿主共享 PID 命名空间 → 可发 SIGHUP、可直接 nsenter
 apparmor: false            # AppArmor 会拦截 setns(进入宿主命名空间)
-privileged: [SYS_ADMIN, NET_ADMIN, NET_RAW, DAC_READ_SEARCH]
+privileged: [SYS_ADMIN, SYS_PTRACE, NET_ADMIN, NET_RAW, DAC_READ_SEARCH]
+                           # SYS_ADMIN  → nsenter/setns 进入宿主 mount 命名空间
+                           # SYS_PTRACE → 打开 /proc/1/ns/mnt 需要 ptrace 权限
+                           #              (HAOS 内核默认 YAMA ptrace_scope 会拦，缺它必失败：
+                           #               nsenter: can't open '/proc/1/ns/mnt': Permission denied)
 docker_api: true           # 读 dockerd 实时配置(/info)，用于"真实生效"校验
 map: [share:rw]            # /share 用于手动放置 mihomo 内核与本地订阅文件
 # 另需：保护模式 = 关闭（见上，插件无法自行声明，但可在面板上一键关闭）
