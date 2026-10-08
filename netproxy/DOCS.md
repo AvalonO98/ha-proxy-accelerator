@@ -146,11 +146,14 @@ Supervisor ──► dockerd ──► ghcr.io / registry-1.docker.io
 重启后面板首页的「宿主访问能力」应显示 `host:host`，且不再有红色横幅。
 
 > 为什么服务进程不是 s6？
-> HA 官方基础镜像的 ENTRYPOINT 是 s6-overlay 的 `/init`，而 `s6-overlay-suexec` **只允许
-> PID 1 运行**；本插件声明了 `host_pid`（共享宿主 PID 命名空间）后不再是 PID 1，s6 会直接
-> 以退出码 100 崩溃（实机日志：`s6-overlay-suexec: fatal: can only run as pid 1`）。
-> 因此 Dockerfile 里显式写了 `ENTRYPOINT []`，让 `/run.sh` 直接作为主进程 —— 插件不需要
-> s6/bashio。
+> Supervisor 创建 add-on 容器时**硬编码** `entrypoint=["/init"]`
+> （`supervisor/docker/cli.py`），所以镜像里的 ENTRYPOINT/CMD 声明无效；容器永远
+> 执行基础镜像的 `/init`，而 HA 官方基础镜像的 `/init` 是 s6-overlay，
+> `s6-overlay-suexec` **只允许 PID 1 运行**。本插件声明了 `host_pid`（共享宿主 PID
+> 命名空间）后不再是 PID 1，s6 会直接以退出码 100 崩溃（实机日志：
+> `s6-overlay-suexec: fatal: can only run as pid 1`）。
+> 因此本插件的 Dockerfile 把镜像里的 `/init` 替换成了自己的入口脚本（exec 传入的
+> `/run.sh`），彻底绕开 s6 —— 插件不需要 s6/bashio。
 
 插件需要的完整权限如下（`config.yaml` 已声明）：
 

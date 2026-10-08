@@ -1,5 +1,16 @@
 # 变更记录
 
+## 0.1.3
+
+**修复（0.1.2 的修法被证明无效，这次是从 Supervisor 源码定位）**
+- Supervisor 创建 add-on 容器时**硬编码** `entrypoint=["/init"]`
+  （`supervisor/docker/cli.py`），因此镜像里的 `ENTRYPOINT`/`CMD` 声明改不了入口：
+  容器永远执行基础镜像的 `/init`，即 s6-overlay。s6 只在 PID 1 可运行，`host_pid`
+  启用后必然崩溃（`s6-overlay-suexec: fatal: can only run as pid 1`，退出码 100）。
+  现在 Dockerfile 直接把镜像里的 `/init` 替换成自己的入口脚本（exec 传入的
+  `/run.sh`），彻底绕开 s6。
+- 0.1.2 的 `ENTRYPOINT []` 保留（对本地 `docker run` 自洽），但注释已更正为事实。
+
 ## 0.1.2
 
 实机验证（HAOS + x86_64，关闭保护模式后）继续修复：

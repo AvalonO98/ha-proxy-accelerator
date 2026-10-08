@@ -21,12 +21,23 @@ ENV NETPROXY_DATA=/data \
     PYTHONDONTWRITEBYTECODE=1 \
     LANG=C.UTF-8
 
-# ⚠️ 必须清空基础镜像的 ENTRYPOINT。
-# HA 官方基础镜像的 ENTRYPOINT 是 s6-overlay 的 /init，而 s6-overlay-suexec 只在
-# **PID 1** 时才能运行；本插件声明了 host_pid（共享宿主 PID 命名空间），容器进程
-# 不再是 PID 1，于是 s6 会直接以退出码 100 崩掉（实机日志：
-# "s6-overlay-suexec: fatal: can only run as pid 1"）。
-# 本插件不需要 s6/bashio，直接让 /run.sh 作为主进程即可。
+# ⚠️ 关键：Supervisor 创建 add-on 容器时**硬编码** `entrypoint=["/init"]`
+#    （见 supervisor/docker/cli.py: `entrypoint=["/init"]`），所以镜像里写
+#    ENTRYPOINT/CMD 都改不了入口 —— 容器永远执行基础镜像的 `/init`。
+#    而 HA 官方基础镜像的 /init 是 s6-overlay，s6-overlay-suexec 只在 **PID 1**
+#    时才能运行；本插件声明了 host_pid（共享宿主 PID 命名空间），容器进程不再是
+#    PID 1，于是实测直接崩溃：
+#        s6-overlay-suexec: fatal: can only run as pid 1   → 退出码 100
+#    因此这里把 /init 替换成我们自己的入口脚本，彻底绕开 s6（插件不需要 s6/bashio）。
+#    Supervisor 传入的命令是 `/init /run.sh`，我们的脚本会 exec 这些参数。
+RUN rm -f /init \
+ && printf '%s\n' '#!/bin/bash' 'set -e' \
+      '# Net Proxy 入口：绕开 s6-overlay（host_pid 下它不是 PID 1 会崩）' \
+      'if [ "$#" -gt 0 ]; then exec "$@"; fi' \
+      'exec /run.sh' > /init \
+ && chmod 0755 /init
+
+# 对本地 `docker run` 也保持一致的入口（Supervisor 会覆盖它，这里是为了自洽）
 ENTRYPOINT []
 
 EXPOSE 8099
