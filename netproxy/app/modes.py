@@ -278,6 +278,8 @@ def _save_applied(st: dict, *, active: bool, original: dict, backup_id: Optional
         "write_mode": write_mode,
         "applied_at": time.time(),
     }
+    # 成功落地即清除"待用户手动应用"标记
+    st.pop("pending_manual_apply", None)
     settings.save_state(st)
 
 
@@ -295,12 +297,17 @@ def _boot_id() -> str:
 def boot_reapply(cfg: dict) -> None:
     """插件（随 HA/宿主重启）启动后，把配置重新落地。
 
-    为什么必须做：HAOS 的 /etc 只读，我们是用 bind mount 覆盖 daemon.json 的，
-    而 bind mount 不跨重启 —— 重启后 dockerd 又会用回 OS 自带的配置。
+    ⚠️ 安全铁律（这是用一台真实 HA 换来的教训）：**绝不在开机流程里自动重启 dockerd。**
 
-    为什么不会重启循环：写文件是幂等的；只有"文件内容确实变了"才会触发重启，
-    落地完成后再次检查就是"无变化"。另外这里用内核 boot_id 做闸门，同一次开机内
-    最多触发一次"需要重启 dockerd"的落地。
+    事故复盘：HAOS 上 dockerd 重启会把 Supervisor 容器一起杀掉；实测这台 HA 在
+    "Supervisor 被外部杀掉后由 systemd 拉起"的情况下，启动流程会在 initialize
+    阶段中途死掉 → Core 与所有插件都起不来 → Supervisor 的应用看门狗又去重启插件 →
+    插件再次自动重启 dockerd → 形成每 ~15 分钟一轮的死循环，最后只能重启宿主才恢复。
+
+    因此：
+      * 只需要 SIGHUP 的方式（Docker 加速镜像）→ 照常自动落地，安全；
+      * 需要重启 dockerd 的方式（上游代理 / WireGuard）→ **只提示、不动手**，
+        由用户在面板显式点「应用并生效」（UI 有二次确认）。
     """
     if not hostops.host_available():
         return
@@ -310,21 +317,26 @@ def boot_reapply(cfg: dict) -> None:
             log("总开关关闭，已卸载 daemon.json 的 bind mount，恢复 OS 原始配置", "notice", "boot")
         return
 
-    st = settings.load_state()
-    boot_id = _boot_id()
-    need_restart_mode = cfg.get("mode") in ("upstream_proxy", "wireguard")
-    if need_restart_mode and st.get("last_apply_boot") == boot_id:
+    if cfg.get("mode") in ("upstream_proxy", "wireguard"):
         live = dockerapi.summarize()
-        if not (live.get("http_proxy") or live.get("https_proxy")):
-            log("本次开机已尝试过需要重启 dockerd 的落地，跳过以避免重启循环；"
-                "如需立即生效请在面板点「应用并生效」。", "warning", "boot")
+        if live.get("http_proxy") or live.get("https_proxy"):
+            log("方式 B/C 的代理仍在 dockerd 中生效，无需重新落地", "info", "boot")
             return
+        st = settings.load_state()
+        applied = st.get("applied") or {}
+        applied["pending_manual_apply"] = {
+            "mode": cfg.get("mode"),
+            "since": time.time(),
+            "reason": "方式 B/C 需要重启 dockerd；为避免中断，插件不会自动执行。",
+        }
+        st["applied"] = applied
+        settings.save_state(st)
+        log("方式 B/C 需要重启 dockerd 才能生效；为避免自动重启 dockerd 造成 HA 中断，"
+            "开机流程不执行它。请在面板点「应用并生效」并留意日志。", "warning", "boot")
+        return
 
     try:
         res = apply(cfg)
-        st = settings.load_state()
-        st["last_apply_boot"] = boot_id
-        settings.save_state(st)
         log(f"开机自动落地：{res.get('state')} · {res.get('message', '')}", "notice", "boot")
     except Exception as e:
         log(f"开机自动落地失败：{type(e).__name__}: {e}（可在面板手动应用）", "error", "boot")
@@ -367,10 +379,13 @@ def recover_on_boot(cfg: dict) -> None:
                 pass
             settings.push_history("rollback", "重启后校验失败，已自动回滚并关闭总开关",
                                   {"problems": v.get("problems")})
-            # 再重启一次让回滚内容生效（异步执行，避免卡住启动）
-            daemonconf.restart_dockerd_detached(
-                int(cfg.get("apply_timeout_seconds", 180)),
-                backup_raw=pre_restore.get("raw"), backup_existed=bool(pre_restore.get("existed")))
+            # ⚠️ 这里**故意不再自动重启 dockerd**。
+            # 事故复盘：自动重启 dockerd 在 HAOS 上可能让 Supervisor 的启动流程中途失败，
+            # 导致 Core 与全部插件起不来（只能重启宿主）。所以只回滚文件 + 关闭总开关，
+            # 把"何时重启 dockerd"交还用户。
+            log("已回滚 daemon.json 并关闭总开关。dockerd 内存中仍是旧的代理配置，"
+                "需要重启 dockerd（或重启宿主）才能完全恢复；为避免再次中断，插件不再自动重启它。",
+                "warning", "recover")
 
     if res:
         log(f"上次宿主侧重启结果：{json.dumps(res, ensure_ascii=False)}", "info", "recover")

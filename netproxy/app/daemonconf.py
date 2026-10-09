@@ -348,6 +348,31 @@ healthy() {{
   return 0
 }}
 
+# ⚠️ 关键补丁（实机事故复盘）：
+#   dockerd 重启会把 Supervisor 容器一起杀掉。这台 HA 上实测，"被外部杀掉后由 systemd
+#   自动拉起"的 Supervisor 可能在启动中途就死掉（只走到 initialize 阶段），
+#   结果 Core 与所有插件都起不来，只能靠重启宿主恢复。
+#   所以在 docker 恢复健康之后，显式重启一次 Supervisor，让它的启动流程从头完整走一遍。
+ensure_supervisor() {{
+  SUP=""
+  for u in hassio-supervisor.service hassio-supervisor; do
+    if systemctl cat "$u" >/dev/null 2>&1; then SUP="$u"; break; fi
+  done
+  if [ -z "$SUP" ]; then
+    echo "[netproxy-apply] WARNING: hassio-supervisor unit not found; if Core/apps stay down, reboot the host"
+    return 0
+  fi
+  echo "[netproxy-apply] restarting $SUP so that Core/apps come back"
+  systemctl restart "$SUP" 2>&1 || echo "[netproxy-apply] restart $SUP failed"
+  i=0
+  while [ "$i" -lt 240 ]; do
+    systemctl is-active --quiet "$SUP" && break
+    i=$((i+2)); sleep 2
+  done
+  echo "[netproxy-apply] $SUP state: $(systemctl is-active "$SUP" 2>/dev/null)"
+  return 0
+}}
+
 echo "[netproxy-apply] restarting docker ($(now))"
 systemctl restart docker 2>&1 || echo "[netproxy-apply] systemctl restart failed"
 
@@ -379,6 +404,8 @@ if [ "$ok" -ne 1 ]; then
 else
   echo "[netproxy-apply] docker healthy after ${{i}}s"
 fi
+
+ensure_supervisor
 
 printf '{{"ok":%s,"finished":%s}}\\n' "$ok" "$(now)" > "$RESULT"
 echo "[netproxy-apply] done"

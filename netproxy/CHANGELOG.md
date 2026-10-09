@@ -1,5 +1,40 @@
 # 变更记录
 
+## 0.1.10
+
+> ⚠️ **重要安全修复。0.1.9 及更早版本严禁在多插件环境下使用方式 B/C。**
+
+**事故复盘（真实 HAOS 上把整个 HA 打挂，4.5 小时不可用）**
+
+起因：插件配置为方式 B（`proxies`）且 `enabled=true`。于是**只要插件被重启**，
+`boot_reapply` 就会自动 `systemctl restart docker`。实机日志：
+
+```
+19:27:19 [daemon.json] 将要修改的键：['proxies']；需要重启 dockerd
+19:27:19 [daemon.json] 已在宿主独立单元 netproxy-apply 中重启 dockerd
+19:27:48 （Supervisor 容器被一起杀掉，随后启动流程中途死掉）
+19:27:53 Phase 'initialize' starting 0 apps        ← 只走到这一步，Core/插件全没起来
+```
+
+链条：重启 dockerd → Supervisor 容器被杀 → 它被 systemd 拉起后**启动流程中途失败**
+（正常应继续走 `system`/`services`/`application` 阶段并启动各应用）→ Core 与所有插件都起不来
+→ Supervisor 的应用看门狗发现插件不健康 → 又重启插件 → 插件再次自动重启 dockerd →
+**每 ~15 分钟一轮的死循环**，最终只能重启宿主才恢复（重启后 Supervisor 启动流程即恢复正常）。
+
+**修复**
+1. **`boot_reapply` 永不再自动重启 dockerd**：方式 A（只需 SIGHUP）照常自动落地；
+   方式 B/C 只记录 `pending_manual_apply` 并提示，必须由用户在面板显式点「应用并生效」。
+2. **重启后校验失败时不再自动重启 dockerd**：只回滚文件 + 关闭总开关，把"何时重启 dockerd"
+   交还用户，避免把系统再次推进死循环。
+3. **宿主脚本增加 Supervisor 恢复步骤**：手动重启 dockerd 后，等 docker 健康再显式
+   `systemctl restart hassio-supervisor`，让 Supervisor 启动流程从头完整走一遍，
+   从而把 Core 与各应用带回来（针对上面那个"中途死掉"的故障）。
+4. **优雅处理 SIGTERM**：插件现在以退出码 0 正常退出，不再触发
+   `did not handle SIGTERM ... exit code 143` 告警。
+
+**教训**：在任何宿主级破坏性操作上，"自动重试/自动重放"必须极其保守；
+带重启的配置只能在用户明确确认下执行一次。
+
 ## 0.1.9
 
 **新增：方式 B 支持「直连出口」（上游类型 = none）**

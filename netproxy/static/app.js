@@ -207,6 +207,13 @@ function render() {
       <div style="margin-top:8px"><button class="primary" onclick="selfHeal()">${T("btn_self_heal")}</button></div>
       ${why}</div>`);
   }
+  if (ap.pending_manual_apply && !ap.pending_verify) {
+    bs.push(`<div class="banner warn">${LANG === "zh"
+      ? "上次配置（" + esc(ap.pending_manual_apply.mode) + "）需要<b>重启 dockerd</b> 才能生效。"
+        + "为避免自动重启 dockerd 造成 HA 中断，插件不再自动执行它；确认可以承受短暂中断后，请点「应用并生效」。"
+      : "The saved mode (" + esc(ap.pending_manual_apply.mode) + ") needs a <b>dockerd restart</b>. "
+        + "The add-on no longer does that automatically; press “Apply & activate” when a brief outage is acceptable."}</div>`);
+  }
   if (ap.pending_verify) {
     bs.push(`<div class="banner warn">${LANG === "zh"
       ? "正在等待 dockerd 重启完成后的自动校验；失败会自动回滚并关闭总开关。"

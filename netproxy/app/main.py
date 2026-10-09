@@ -433,7 +433,22 @@ def _probe() -> dict:
 # 启动
 # --------------------------------------------------------------------------- #
 def main() -> None:
+    import signal  # 局部导入：仅用于优雅处理退出信号
+
     settings.ensure_dirs()
+
+    # 优雅退出：Supervisor 停止插件时会发 SIGTERM，默认处理会以退出码 143 结束，
+    # 并在 HA 日志里留下 "did not handle SIGTERM ... exit code 143" 告警。
+    def _stop(signum, _frame):
+        log(f"收到信号 {signum}，优雅退出（exit 0）", "notice", "boot")
+        raise SystemExit(0)
+
+    for _sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            signal.signal(_sig, _stop)
+        except Exception:
+            pass
+
     cfg = settings.load_config()
     tok = settings.api_token()
 
