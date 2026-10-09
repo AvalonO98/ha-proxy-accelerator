@@ -34,6 +34,18 @@ def test_generate_upstream_http():
     assert "MATCH,PROXY" in text
 
 
+def test_generate_direct_egress_without_upstream():
+    """上游类型 = none：允许生成"本地代理 + 直连出口"的配置（不需要外部上游）。"""
+    cfg = _cfg(upstream={"type": "none", "url": ""})
+    text, err = mihomo.generate_config(cfg)
+    assert not err, err
+    assert "proxies: []" in text          # 没有真正的出站代理
+    assert "MATCH,PROXY" in text
+    assert 'type: "select"' in text
+    # 自锁防护规则同样必须在
+    assert "IP-CIDR,172.30.32.0/23,DIRECT,no-resolve" in text
+
+
 def test_generate_upstream_with_auth():
     # 显式字段
     cfg = _cfg(upstream={"type": "socks5", "url": "socks5://10.0.0.9:1080",
@@ -68,7 +80,9 @@ def test_parse_upstream_variants():
 
 
 def test_generate_requires_upstream():
-    text, err = mihomo.generate_config(_cfg(upstream={"type": "none", "url": ""}))
+    """type=http 却没填地址 → 必须报错。
+    （type=none 自 0.1.9 起是合法配置「直连出口」，见 direct egress 测试。）"""
+    text, err = mihomo.generate_config(_cfg(upstream={"type": "http", "url": ""}))
     assert text == "" and err and "上游代理" in err
 
 

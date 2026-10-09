@@ -359,8 +359,9 @@ def generate_config(cfg: dict) -> tuple:
             }
             used.append("本地订阅文件 /share/netproxy/subscription.yaml")
 
-        if not proxies and not provider:
-            return "", "方式 B 需要填写上游代理地址（http/socks5）或订阅地址"
+        if not proxies and not provider and up.get("type") != "none":
+            return "", ("方式 B 需要填写上游代理地址（http/socks5）、订阅地址，"
+                        "或把上游类型选为「直连出口」")
     else:
         return "", f"方式 {mode} 不需要本地内核"
 

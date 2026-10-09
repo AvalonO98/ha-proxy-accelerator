@@ -112,8 +112,11 @@ def ensure_kernel_running(cfg: dict) -> tuple:
     if cfg["mode"] == "upstream_proxy":
         up = cfg.get("upstream") or {}
         sub = cfg.get("subscription") or {}
-        if up.get("type") not in ("http", "socks5") and not sub.get("url") and not os.path.isfile("/share/netproxy/subscription.yaml"):
-            return False, "方式 B 需要填写上游代理地址（http/socks5）或订阅地址"
+        if (up.get("type") not in ("http", "socks5", "none")
+                and not sub.get("url")
+                and not os.path.isfile("/share/netproxy/subscription.yaml")):
+            return False, ("方式 B 需要填写上游代理地址（http/socks5）、订阅地址，"
+                           "或把上游类型选为「直连出口」")
     if cfg["mode"] == "wireguard":
         text = (cfg.get("wireguard") or {}).get("config", "")
         if not text.strip():
