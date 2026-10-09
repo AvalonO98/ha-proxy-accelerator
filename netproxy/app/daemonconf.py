@@ -439,6 +439,17 @@ def unit_active() -> Optional[bool]:
 # --------------------------------------------------------------------------- #
 # 校验（真实生效）
 # --------------------------------------------------------------------------- #
+def _norm_url(u: str) -> str:
+    """归一化 URL 再做比较。
+
+    dockerd 会**规范化** registry-mirrors（实测：把 https://docker.m.daocloud.io
+    变成 https://docker.m.daocloud.io/），也可能调整顺序/去重，所以校验必须容忍
+    "结尾斜杠"和顺序差异 —— 否则会把"其实已经生效"误判成失败并回滚
+    （这个假失败是实机踩出来的）。
+    """
+    return (u or "").strip().rstrip("/")
+
+
 def verify(expected_mirrors: Optional[list], expected_proxies: Optional[dict]) -> dict:
     """用 dockerd 的实时配置反过来校验。"""
     s = dockerapi.summarize()
@@ -447,17 +458,17 @@ def verify(expected_mirrors: Optional[list], expected_proxies: Optional[dict]) -
 
     problems = []
     if expected_mirrors is not None:
-        live = sorted(s.get("registry_mirrors") or [])
-        want = sorted(expected_mirrors)
+        live = sorted(_norm_url(x) for x in (s.get("registry_mirrors") or []))
+        want = sorted(_norm_url(x) for x in expected_mirrors)
         if live != want:
             problems.append(f"registry-mirrors 实时值 {live} 与期望 {want} 不一致")
     if expected_proxies:
-        live_http = (s.get("http_proxy") or "").rstrip("/")
-        want_http = (expected_proxies.get("http-proxy") or "").rstrip("/")
+        live_http = _norm_url(s.get("http_proxy"))
+        want_http = _norm_url(expected_proxies.get("http-proxy"))
         if live_http != want_http:
             problems.append(f"HttpProxy 实时值 {live_http!r} 与期望 {want_http!r} 不一致")
-        live_https = (s.get("https_proxy") or "").rstrip("/")
-        want_https = (expected_proxies.get("https-proxy") or "").rstrip("/")
+        live_https = _norm_url(s.get("https_proxy"))
+        want_https = _norm_url(expected_proxies.get("https-proxy"))
         if live_https != want_https:
             problems.append(f"HttpsProxy 实时值 {live_https!r} 与期望 {want_https!r} 不一致")
     elif expected_proxies == {}:

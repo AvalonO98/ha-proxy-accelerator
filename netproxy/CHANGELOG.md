@@ -1,5 +1,23 @@
 # 变更记录
 
+## 0.1.8
+
+**修复：校验把"已生效"误判为失败并回滚（实机踩出）**
+- 实机日志：`已用 bind mount 覆盖 /etc/docker/daemon.json → /etc/udev/rules.d/netproxy-daemon.json`
+  成功、`SIGHUP → dockerd (517)` 成功、dockerd 实时 `registry-mirrors` 已经变成我们写入的地址；
+  但校验报 `实时值 ['https://docker.1ms.run/','https://docker.m.daocloud.io/'] 与期望[无结尾斜杠]不一致`
+  → 触发自动回滚（umount），等于白干。
+- 根因：dockerd 会**规范化** `registry-mirrors`（补结尾 `/`，可能调顺序/去重），
+  而校验用的是严格字符串比较。
+- 修复：比较前统一归一化（去首尾空白、去结尾 `/`），代理地址同样处理；顺序差异不算失败。
+- 附带收获：这次误判把 **umount 回滚路径**验证通过了 —— 回滚后宿主
+  `/etc/docker/daemon.json` 完好无损，`bind_mounted=false`。
+
+## 0.1.7
+
+- bind mount 落地点写入前先创建父目录（否则 `/mnt/overlay`、`/mnt/data/netproxy`
+  这些兜底路径必然写入失败）。
+
 ## 0.1.6
 
 **修复：HAOS 的 /etc 是只读的 → 改用 bind mount 落地 daemon.json（实机定位）**

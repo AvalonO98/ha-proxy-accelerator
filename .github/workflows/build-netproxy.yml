@@ -19,7 +19,7 @@ permissions:
 env:
   # 部署时按最终选择调整（见 config.yaml 的 image 字段，两处必须一致）
   IMAGE: ghcr.io/avalono98/ha-proxy-accelerator
-  VERSION: "0.1.7"
+  VERSION: "0.1.8"
 
 jobs:
   build:
