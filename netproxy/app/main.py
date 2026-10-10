@@ -399,9 +399,7 @@ def _diag(cfg: dict) -> dict:
         "docker_socket": dockerapi.socket_path(),
         "daemon_json_mounted": daemonconf.is_mounted(),
         "daemon_json_store": daemonconf.mount_candidates(),
-        "supervisor_self": {k: v for k, v in supervisor_api.self_info().items()
-                            if k in ("protected", "host_pid", "host_network", "docker_api",
-                                     "version", "state", "privileged", "apparmor")},
+        "supervisor_self": supervisor_api.diagnostics(),
         "kernel": mihomo.status(),
         "config": cfg,
         "state": settings.load_state(),

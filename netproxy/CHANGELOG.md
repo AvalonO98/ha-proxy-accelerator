@@ -1,5 +1,21 @@
 # 变更记录
 
+## 0.1.11
+
+**修复：`host_network` 下 `http://supervisor` 解析不到 → 一键自修复/所有 Supervisor API 调用全部失败**
+
+- 实机复现：全新安装后 `protected` 又回到默认 `true`，点「一键修复权限」没有任何效果，
+  `/api/diag` 里的 `supervisor_self` 是空的。
+- 根因：插件声明了 `host_network: true`，容器处于**宿主网络命名空间**，而 Supervisor API 的
+  地址在 hassio 网络里（`http://supervisor` 这个 DNS 名在这里解析不到）。
+- 修复：`supervisor_api` 改为按候选地址逐个探测并缓存第一个可连通的：
+  `http://172.30.32.2`（Supervisor 在 hassio 网桥上的地址）→ `http://supervisor` →
+  `http://hassio-supervisor`；并可用环境变量 `NETPROXY_SUPERVISOR_API` 覆盖。
+  `/api/diag` 现在会给出实际使用的基地址、探测过程与完整错误原因。
+- 顺带核对 Supervisor 源码确认可行性：`/addons/{app}/security` 注册在 **V1 API 组**
+  （`hassio_role: default` 即可访问），且其 handler 未禁止 `self` —— 所以插件关闭
+  **自己**的保护模式在权限上是允许的。
+
 ## 0.1.10
 
 > ⚠️ **重要安全修复。0.1.9 及更早版本严禁在多插件环境下使用方式 B/C。**
