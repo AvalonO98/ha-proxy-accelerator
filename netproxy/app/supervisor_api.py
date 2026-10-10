@@ -112,7 +112,8 @@ def _request(method: str, path: str, payload: Optional[dict] = None,
     )
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
-            return r.status, r.read().decode("utf-8", "replace")[:600]
+            # 不要截断得太短：/addons/self/info 的 JSON 有好几 KB，截断会导致 json.loads 失败
+            return r.status, r.read().decode("utf-8", "replace")[:65536]
     except urllib.error.HTTPError as e:
         try:
             body = e.read().decode("utf-8", "replace")[:600]
@@ -126,11 +127,11 @@ def _request(method: str, path: str, payload: Optional[dict] = None,
 def self_info() -> dict:
     code, body = _request("GET", "/addons/self/info")
     if code != 200:
-        return {"_error": f"HTTP {code}: {body}"}
+        return {"_error": f"HTTP {code}: {body[:300]}"}
     try:
         return json.loads(body).get("data", {})
-    except Exception:
-        return {"_error": body}
+    except Exception as e:
+        return {"_error": f"解析失败：{type(e).__name__}: {e}（响应前 200 字符：{body[:200]}）"}
 
 
 def disable_protection() -> Tuple[bool, str]:

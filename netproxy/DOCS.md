@@ -155,12 +155,22 @@ Supervisor ──► dockerd ──► ghcr.io / registry-1.docker.io
 （`supervisor/docker/app.py`：`return "host" if not self.app.protected and self.app.host_pid else None`），
 于是插件拿不到宿主 PID 命名空间，读写宿主 `/etc/docker/daemon.json` 全部失效。
 
-两种修法，任选其一：
+**只能手动关闭，插件自己改不了**（这一点已经过源码 + 实机双重确认）：
 
-1. **一键修复（推荐）**：面板上红色横幅里点「一键修复权限（关闭保护模式并重启插件）」。
-   插件会调用 Supervisor 的 `POST /addons/self/security {"protected": false}`，
-   再 `POST /addons/self/restart` 重启自己使新参数生效。
-2. **手动**：设置 → 加载项 → Net Proxy → 关闭「保护模式」→ 重启插件。
+- Supervisor 的 API 中间件把 `/addons/{app}/security` 显式排除在免检之外
+  （`supervisor/api/middleware/security.py` 里的 `(?!security)` 负向断言），
+  即该端点要求**管理员级凭据**；
+- 实机验证：插件调用 `POST /addons/self/security {"protected": false}` 返回
+  **`HTTP 403: Forbidden`**。
+
+因此正确做法是：
+
+1. 设置 → 加载项 → **Net Proxy(网络代理)** → 关闭「**保护模式**」；
+2. **重启插件**（保护模式只在容器创建时生效）；
+3. 面板首页「宿主访问能力」应变为 `host:host`，红色横幅消失。
+
+> 面板红色横幅里也提供了「试试自动修复」按钮：它仍会尝试调用 Supervisor API，
+> 但按当前 Supervisor 的行为**预期会失败**，按钮的存在只是为了在将来版本放宽限制时可用。
 
 重启后面板首页的「宿主访问能力」应显示 `host:host`，且不再有红色横幅。
 

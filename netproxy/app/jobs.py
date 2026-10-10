@@ -47,13 +47,22 @@ def busy() -> bool:
 
 
 def submit(kind: str, fn: Callable[[dict], dict], mutating: bool = True) -> dict:
-    """提交任务。mutating=True 的任务串行执行（避免并发改 daemon.json）。"""
-    if busy():
-        return {"error": "已有任务在执行中，请等它结束"}
+    """提交任务。
+
+    并发规则：写操作（mutating）必须独占；只读任务（连通性检测、实测拉取等）
+    可以与其它只读任务并行，但不能与写操作并行（否则会观察到半落地的状态）。
+    """
+    with _lock:
+        running = [j for j in _JOBS.values() if j["state"] == "running"]
+        if mutating and running:
+            return {"error": "已有任务在执行中，请等它结束"}
+        if not mutating and any(j.get("mutating") for j in running):
+            return {"error": "有写操作任务在执行中，请等它结束"}
     seq_start = LOG.tail(1)[0]["seq"] if LOG.tail(1) else 0
     job = {
         "id": _new_id(),
         "kind": kind,
+        "mutating": bool(mutating),
         "state": "running",
         "started": time.time(),
         "finished": None,

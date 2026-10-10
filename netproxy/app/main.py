@@ -161,6 +161,7 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/apply" and method == "POST":
             body = self._body()
+            prev = bool(cfg.get("enabled"))
             if isinstance(body.get("config"), dict):
                 merged = dict(cfg)
                 merged.pop("_source", None)
@@ -169,7 +170,8 @@ class Handler(BaseHTTPRequestHandler):
             if body.get("enabled") is not None:
                 cfg["enabled"] = bool(body["enabled"])
                 settings.save_config(cfg)
-            return self._json({"job": _submit_apply()})
+            # 失败时把总开关回滚到应用之前的值——否则界面会显示"已开启"但实际没生效
+            return self._json({"job": _submit_apply(prev_enabled=prev)})
 
         if path == "/api/rollback" and method == "POST":
             body = self._body()
@@ -454,7 +456,9 @@ def main() -> None:
     log(f"命名空间模式：{hostops.namespace_mode()}；宿主访问：{hostops.host_available()}", "notice", "boot")
     if not hostops.host_available():
         log("警告：拿不到宿主文件系统访问权限，方式 A/B/C 都无法生效。"
-            "请检查插件是否获得 host_pid: true 与 privileged: [SYS_ADMIN]。", "warning", "boot")
+            "最常见原因是 Supervisor 的「保护模式」仍开启（保护模式下 host_pid / docker_api 不生效）——"
+            "请在插件页面关闭「保护模式」后重启插件；其次是缺少 host_pid: true 与 privileged: [SYS_ADMIN]。",
+            "warning", "boot")
     log(f"直连面板令牌（仅手动发布端口时需要）：{tok}", "notice", "boot")
     log(f"内核状态：{json.dumps(mihomo.status(), ensure_ascii=False)}", "info", "boot")
 

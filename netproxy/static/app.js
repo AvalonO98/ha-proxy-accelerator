@@ -33,9 +33,9 @@ const I18N = {
     btn_kernel_restart: "重启内核", btn_rollback: "回滚到应用前",
     btn_test: "检测连通性（直连 vs 代理）", btn_pull: "实测拉取镜像",
     btn_pause: "暂停", btn_clear_view: "清屏",
-    btn_self_heal: "一键修复权限（关闭保护模式并重启插件）",
-    confirm_self_heal: "将调用 Supervisor 关闭本插件的「保护模式」并重启插件。这是 host_pid / docker_api 生效的前提，插件本身无法声明该设置。确认继续？",
-    self_heal_started: "已请求关闭保护模式，插件正在重启…约 10 秒后本页面会自动重新加载。",
+    btn_self_heal: "试试自动修复（实测会被 Supervisor 拒绝，见上）",
+    confirm_self_heal: "这会请求 Supervisor 关闭本插件的「保护模式」。实测该请求会返回 403（Supervisor 不允许插件改动自己的保护模式），因此更可靠的做法是手动关闭：设置 → 加载项 → Net Proxy → 保护模式 → 关 → 重启插件。仍要尝试吗？",
+    self_heal_started: "正在尝试请求关闭保护模式（若失败，请按上方的手动步骤操作）…",
     sec_verify: "3 · 真实生效状态", sec_verify_hint: "数据来自 dockerd 实时配置与宿主机文件，不是只看插件自己的设置",
     sec_log: "4 · 运行日志", sec_hist: "5 · 变更历史与备份", hist: "变更历史", backups: "daemon.json 备份",
     raw: "当前 daemon.json（宿主）",
@@ -80,9 +80,9 @@ const I18N = {
     btn_kernel_restart: "Restart kernel", btn_rollback: "Roll back to pre-apply",
     btn_test: "Test connectivity (direct vs proxy)", btn_pull: "Test image pull",
     btn_pause: "Pause", btn_clear_view: "Clear",
-    btn_self_heal: "Fix permissions automatically (disable protection mode & restart)",
-    confirm_self_heal: "This asks Supervisor to disable protection mode for this add-on and restart it. Protection mode is a user-level setting the add-on cannot declare, and host_pid / docker_api only work when it is off. Continue?",
-    self_heal_started: "Protection mode disabling requested; the add-on is restarting… this page reloads in ~10s.",
+    btn_self_heal: "Try auto-fix (Supervisor rejects this — see above)",
+    confirm_self_heal: "This asks Supervisor to disable protection mode for this add-on. In practice it returns 403 (Supervisor does not let an add-on change its own protection mode), so the reliable path is manual: Settings → Add-ons → Net Proxy → Protection mode → off → restart. Try anyway?",
+    self_heal_started: "Requesting protection-mode change (if it fails, follow the manual steps above)…",
     sec_verify: "3 · Actual live state", sec_verify_hint: "Read from dockerd live config and host files, not from this add-on's own settings",
     sec_log: "4 · Logs", sec_hist: "5 · History & backups", hist: "History", backups: "daemon.json backups",
     raw: "Current daemon.json (host)",
@@ -201,10 +201,13 @@ function render() {
     const why = cap.reason ? esc(cap.reason) : "";
     bs.push(`<div class="banner err">${LANG === "zh"
       ? "拿不到宿主机文件系统访问权限（当前模式 " + esc(cap.namespace_mode) + "），方式 A/B/C 都无法生效。<br>"
-        + "最常见原因：插件处于 Supervisor 的<b>保护模式</b>——保护模式下 host_pid / docker_api 不会生效。"
+        + "<b>解决办法（需要你手动做一次）</b>：设置 → 加载项 → Net Proxy(网络代理) → 关闭「<b>保护模式</b>」→ 重启插件。<br>"
+        + "保护模式下 Supervisor 不会把 host_pid / docker_api 应用到容器，这是 Supervisor 的硬限制；"
+        + "并且 Supervisor 不允许插件修改自己的保护模式（实测返回 403）。"
       : "No host filesystem access (mode " + esc(cap.namespace_mode) + "); modes A/B/C cannot take effect.<br>"
-        + "Most likely cause: the add-on runs in Supervisor <b>protection mode</b>, which disables host_pid / docker_api."}
-      <div style="margin-top:8px"><button class="primary" onclick="selfHeal()">${T("btn_self_heal")}</button></div>
+        + "<b>Fix (manual, once):</b> Settings → Add-ons → Net Proxy → turn off <b>Protection mode</b> → restart the add-on.<br>"
+        + "Supervisor does not apply host_pid / docker_api in protection mode, and it does not allow an add-on to change its own protection mode (403)."}
+      <div style="margin-top:8px"><button onclick="selfHeal()">${T("btn_self_heal")}</button></div>
       ${why}</div>`);
   }
   if (ap.pending_manual_apply && !ap.pending_verify) {
