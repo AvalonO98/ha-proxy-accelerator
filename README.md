@@ -1,5 +1,7 @@
 # Net Proxy · HA 网络代理插件
 
+_维护者 AvalonO98 · MIT · 代码由 **WorkBuddy（AI 编程助手）** 生成并全程实现_
+
 给 Home Assistant（HAOS / Supervised）用的网络代理与镜像加速 Add-on：
 
 - **可交互界面**：Supervisor 原生选项 + 侧边栏 Ingress 面板，带总开关；
@@ -140,9 +142,21 @@ repository.yaml      # HA add-on 仓库描述
 python tests/run_tests.py     # 无需 pytest / 第三方依赖
 ```
 
+## 关于本项目
+
+- **维护者 / 版权人**：AvalonO98
+- **代码来源**：由 **WorkBuddy（AI 编程助手）** 生成并全程实现——不只是补全片段，而是方案设计、
+  编码、测试补齐、GitHub Actions 构建、以及真机（HAOS 18.3 / Supervisor 2026.10 / docker 29.7.2）
+  上的验证与回归都由它完成。
+- **范围说明**：`0.1.13` – `0.1.20` 的功能改进与缺陷修复为一次性连续完成，包括
+  内核安装崩溃修复、探测层缓存、镜像源测速排序、面板表单/排版修复、看门狗溯源、流量统计页；
+  更早的 `0.1.0` – `0.1.12` 是项目初始基线。
+- **人能做什么**：面板上的开关（保护模式、自动恢复）、以及是否重启 dockerd 这类
+  会影响可用性的决定，仍然由维护者本人确认后再执行。
+
 ## 许可证
 
-[MIT](LICENSE) © 2026 HA Proxy Accelerator Team。
+[MIT](LICENSE) © 2026 AvalonO98。
 
 可自由使用、修改、再分发（含商用），只需保留版权声明与许可声明；软件按"现状"提供，不附带担保。
 
