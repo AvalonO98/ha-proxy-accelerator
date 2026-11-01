@@ -130,3 +130,38 @@ def test_version_matches_addon_config_and_ci():
     m = re.search(r'VERSION:\s*"([^"]+)"', wf)
     assert m, "workflow 里找不到 VERSION"
     assert m.group(1) == VERSION, f"CI={m.group(1)} 与 app/version.py={VERSION} 不一致"
+
+
+# --------------------------------------------------------------------------- #
+# 信任边界：明文密钥只对 ingress / 回环返回
+# --------------------------------------------------------------------------- #
+def _handler(ip: str = "192.168.1.5", ingress: bool = False) -> "main.Handler":
+    h = main.Handler.__new__(main.Handler)
+    h.client_address = (ip, 12345)
+    h.headers = {"X-Ingress-Path": "/abc"} if ingress else {}
+    return h
+
+
+def test_trusted_only_for_ingress_or_loopback():
+    assert _handler(ip="127.0.0.1")._trusted() is True
+    assert _handler(ip="::1")._trusted() is True
+    assert _handler(ip="192.168.1.5", ingress=True)._trusted() is True
+    assert _handler(ip="192.168.1.5")._trusted() is False
+    assert _handler(ip="172.30.32.1")._trusted() is False   # Docker 内网 ≠ 完全受信
+
+
+def test_mask_redacts_subscription_token_and_upstream_password():
+    from netproxy_app import settings
+    cfg = {
+        "upstream": {"password": "pw", "url": "http://x"},
+        "wireguard": {"config": "PrivateKey = k"},
+        "subscription": {"url": "https://s/x?token=abc"},
+        "mirrors": ["https://m"],
+    }
+    m = settings.mask(cfg)
+    assert "pw" not in str(m)
+    assert "token=abc" not in str(m)
+    assert "PrivateKey" not in str(m)
+    # 非密钥字段保持不变
+    assert m["mirrors"] == ["https://m"]
+    assert m["upstream"]["url"] == "http://x"

@@ -66,14 +66,27 @@ class Handler(BaseHTTPRequestHandler):
     def _client_ip(self) -> str:
         return self.client_address[0] if self.client_address else ""
 
+    def _trusted(self) -> bool:
+        """完全受信：来自 Supervisor ingress 反代，或本容器回环。
+
+        Supervisor 反代会注入 X-Ingress-Path 头；回环是插件自己/本机调试。
+        这两类可以拿到明文密钥（面板回显密码、诊断现场）。
+        """
+        if self.headers.get("X-Ingress-Path"):
+            return True
+        ip = self._client_ip()
+        return ip.startswith("127.") or ip in ("::1", "localhost")
+
     def _authorized(self) -> bool:
         path = urlparse(self.path).path
         if path.startswith("/api/health"):
             return True
-        if self.headers.get("X-Ingress-Path"):
+        if self._trusted():
             return True
+        # Docker 内网（172.30.x / 172.17.x 等）：Supervisor 在某些路径下反代
+        # 可能不带 X-Ingress-Path，但 socket 对端是本机/同 Docker 网络，可信度较高。
         ip = self._client_ip()
-        if ip.startswith("127.") or ip.startswith("172.30.") or ip in ("::1", "localhost"):
+        if ip.startswith("172.30.") or ip.startswith("172.17."):
             return True
         q = parse_qs(urlparse(self.path).query)
         tok = self.headers.get("X-Netproxy-Token") or (q.get("token") or [""])[0]
@@ -173,7 +186,11 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(modes.status(cfg))
 
         if path == "/api/config" and method == "GET":
-            return self._json({"config": cfg, "source": cfg.get("_source"),
+            # 面板经 ingress 访问时回显完整配置（含用户自己填的密码）；经 token 直连
+            # 或 Docker 内网访问时，隐去密码/订阅 token/私钥，避免密钥经非受信通道外泄。
+            body_cfg = cfg if self._trusted() else settings.mask(cfg)
+            return self._json({"config": body_cfg, "source": cfg.get("_source"),
+                               "masked": not self._trusted(),
                                "token_hint": "直连端口访问需要在 URL 上带 ?token="})
 
         if path == "/api/config" and method == "POST":
@@ -268,7 +285,12 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"backups": daemonconf.list_backups(50)})
 
         if path == "/api/diag" and method == "GET":
-            return self._json(_diag(cfg))
+            diag = _diag(cfg)
+            if not self._trusted():
+                # 非 ingress/回环访问：诊断现场里的 config 隐去密钥（密码/订阅 token/私钥）。
+                diag["config"] = settings.mask(cfg)
+                diag["masked"] = True
+            return self._json(diag)
 
         if path == "/api/self-heal" and method == "POST":
             return self._json({"job": jobs.submit("self-heal", _do_self_heal)})
