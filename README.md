@@ -30,11 +30,69 @@ Can't pull image docker:29.7.2-cli: Get "https://registry-1.docker.io/v2/": time
    `https://github.com/AvalonO98/ha-proxy-accelerator`
    （若 GitHub 直连不稳定，可用加速前缀：`https://ghfast.top/https://github.com/AvalonO98/ha-proxy-accelerator`）
 2. 刷新商店，安装 **Net Proxy (网络代理)**。
-3. 启动后点侧边栏「网络代理」打开面板。
-4. 在面板里：选择代理方式 → 填镜像源/上游 → 打开总开关（或直接点「应用并生效」）。
+3. **关闭「保护模式」并保持关闭**（见下一节，这是硬性前提）。
+4. 启动后点侧边栏「网络代理」打开面板。
+5. 在面板里：选择代理方式 → 填镜像源/上游 → 打开总开关（或直接点「应用并生效」）。
 
 > 插件需要 `host_network` + `host_pid` + `privileged: [SYS_ADMIN, ...]`，因为要读写宿主机的
 > `/etc/docker/daemon.json` 并让 dockerd 重新加载。安装时 Home Assistant 会给出权限提示，属预期。
+
+## 必须长期关闭「保护模式」（重要）
+
+这不是"安装时关一次就好"的步骤，而是**只要想让插件干活就必须一直关着**。
+
+Supervisor 在 `supervisor/docker/app.py` 里把三个能力都挂在同一个前置条件上：
+
+```python
+@property
+def pid_mode(self):                       # 共享宿主 PID 命名空间
+    if not self.app.protected and self.app.host_pid:
+        return "host"
+    return None
+
+# Docker API support
+if not self.app.protected and self.app.access_docker_api:
+    mounts.append(MOUNT_DOCKER)           # 挂载 /var/run/docker.sock
+
+if not self.app.protected and self.app.with_full_access:
+    ...                                   # full_access / privileged
+```
+
+于是 `protected: true` 时：
+
+| 插件需要的能力 | 保护模式开启时 | 后果 |
+|---|---|---|
+| `host_pid` → 进宿主 mount 命名空间读写 `/etc/docker/daemon.json` | 不生效 | 方式 A/B/C 全部无效 |
+| `docker_api` → 挂 docker.sock 读 `/info` 做"真实生效"校验 | 不挂载 | 无法校验、无法实测拉取 |
+| `with_full_access` → `privileged` 生效 | 不生效 | 缺 `SYS_ADMIN`，`nsenter` 失败 |
+
+此时面板顶部会显示「拿不到宿主机文件系统访问权限」，**并且不会写入任何配置**——
+插件会直接拒绝执行，不会留下半套 daemon.json。
+
+### 怎么关、怎么确认
+
+- 设置 → 应用（旧版本叫「加载项」）→ **Net Proxy** → 关闭「保护模式」→ 重启该应用；
+- **只能手动关**：插件自己调 `POST /addons/self/security` 会返回 **403**（该端点要求管理员级
+  令牌，普通 add-on token 与 Terminal&SSH 的 manager token 都不行）。同理「看门狗/自动恢复」
+  对应的 `POST /apps/<slug>/options` 也是 403 —— 面板只能提示，不能替你打开；
+- 确认：`ha apps info <slug> | grep protected`，或看面板顶部有没有红色横幅。
+
+另外建议把插件页面的「**自动恢复**」（旧名「看门狗」）也打开：它关着的时候，插件进程崩溃
+不会被 Supervisor 拉起，会一直停在 `error` 状态。
+
+### 这是不是降低了安全性
+
+是，这是一个明确的取舍：关掉保护模式后，该容器能读写宿主的 Docker 配置、能看到宿主进程。
+插件在这个前提下做的收敛是：
+
+- **只动自己管理的两个键**（`registry-mirrors` / `proxies`），其余键（`log-driver`、`data-root`、
+  `bip`、`ipv6`…）原样保留；
+- 写入前先备份、JSON 校验、原子替换；写后用 dockerd 实时配置反向校验，不一致立即回滚；
+- 宿主命令走白名单（`hostops._ALLOWED_BIN`），不拼接执行任意命令；
+- 面板需经 HA ingress（带登录态）访问；手动发布端口时必须带一次性 token。
+
+如果你不能接受这个取舍，这个插件就不适合你的环境——它没有"不开保护模式也能改 dockerd"
+的实现路径。
 
 ## 三种代理方式
 
@@ -61,6 +119,9 @@ Can't pull image docker:29.7.2-cli: Get "https://registry-1.docker.io/v2/": time
 - **看门狗**：方式 B/C 下持续用「经代理访问 ghcr.io」做健康检查，持续失败按阈值自动回滚；
 - **自锁防护**：`127.0.0.0/8`、`172.30.32.0/23`（HA 内部网络）、内网段、`.local.hass.io` 全部直连，
   避免把 Supervisor ↔ 容器通信塞进代理。
+
+这些都建立在「保护模式已关闭」这个前提上 —— 它的原因、风险与取舍，见上面的
+**必须长期关闭「保护模式」** 一节。
 
 ## 目录结构
 
