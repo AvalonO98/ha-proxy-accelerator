@@ -1,5 +1,34 @@
 # 变更记录
 
+## 0.1.14
+
+**目标：让 Docker 拉取真的更快。顺带把「看门狗为什么不生效」查清楚了。**
+
+1. **应用前探测镜像源，剔除死源、按实测延迟排序**（新选项 `mirror_healthcheck`，
+   默认开）。
+   - 为什么这是加速而不是洁癖：dockerd 是**按顺序**尝试 `registry-mirrors` 的，
+     遇到不响应的源要等它超时（默认几十秒）才轮到下一个。也就是说列表里混进
+     一个死源，**每一次** pull 都要白等一轮。
+   - 现在 apply 时会**并发**探测每个源的 `/v2/`（4 线程、5 秒超时），可达的按
+     延迟升序写入，不可达的剔除并在日志里给出原因；全部不可达则**拒绝应用**，
+     不动 daemon.json。
+   - 只影响写入的列表，**不改你填的原文**；任务结果里会回显"本次选用的镜像源"。
+2. **看门狗的真相**（读 Supervisor 源码 + 真机验证得出）
+   - `config.yaml` 里的 `watchdog: "http://[HOST]:[PORT:8099]/api/health"` 是能
+     被 `RE_WATCHDOG` 匹配的，运行时会拼成 `http://172.30.32.1:8099/api/health`
+     （真机实测 200）。**URL 没问题。**
+   - `watchdog: false` 来自 `app.watchdog`，读的是**持久化开关**
+     `persist[ATTR_WATCHDOG]`，也就是 UI 上那个「看门狗」按钮。`watchdog_container`
+     第一行就是 `if not self.watchdog: return` —— 开关没开，容器挂了没人拉起。
+   - 这个开关属管理员级设置：`POST /apps/<slug>/options {"watchdog":true}` 与
+     `/security` 一样返回 **403**（插件自身 token 与 Terminal&SSH 的 manager token
+     都不行）。所以插件只能**如实提示**，不能自改 —— 面板现在会在状态里检测并在
+     顶部给出明确指引。
+3. `supervisor_api.self_info()` 加 30 秒缓存：面板每 5 秒刷新一次，没必要每次都跨
+   容器打一轮 Supervisor API（失败结果同样缓存，避免不可达时反复等超时）。
+4. 测试 63 → **68**：镜像源排序/剔除/全死/空列表，以及 `mirror_healthcheck` 的默认
+   值与脏值收敛。
+
 ## 0.1.13
 
 **一个必现崩溃 + 面板轮询开销降两个数量级（附实测数据）+ 一批边界收紧**

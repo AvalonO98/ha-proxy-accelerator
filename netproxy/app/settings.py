@@ -33,6 +33,7 @@ DEFAULTS = {
     "enabled": False,
     "mode": "docker_mirror",
     "mirrors": ["https://docker.m.daocloud.io", "https://docker.1ms.run"],
+    "mirror_healthcheck": True,
     "github_mirrors": ["https://ghfast.top/"],
     "upstream": {"type": "none", "url": "", "username": "", "password": ""},
     "subscription": {"url": "", "profile": ""},
@@ -104,7 +105,7 @@ def normalize(cfg: dict) -> dict:
         dns = list(DEFAULTS["dns"])
     cfg["dns"] = [str(d).strip() for d in dns if str(d).strip()]
 
-    for k in ("enabled", "auto_rollback"):
+    for k in ("enabled", "auto_rollback", "mirror_healthcheck"):
         cfg[k] = bool(cfg.get(k))
     for k in ("health_check_seconds",):
         try:

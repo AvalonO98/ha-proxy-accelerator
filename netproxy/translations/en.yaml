@@ -13,6 +13,13 @@ configuration:
     description: >-
       Docker Hub pull-through mirrors, free-form and fully custom (one per line). Only replaces
       the registry-mirrors key; Docker Hub only.
+  mirror_healthcheck:
+    name: Probe mirrors before applying
+    description: >-
+      dockerd tries registry-mirrors in order and waits for each one to time out before trying
+      the next. When enabled, every mirror is probed concurrently before applying: unreachable
+      entries are dropped and the fastest ones are written first (your saved list is untouched).
+      If nothing is reachable the apply is refused.
   github_mirrors:
     name: GitHub acceleration prefixes
     description: >-

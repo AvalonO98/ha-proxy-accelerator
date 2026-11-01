@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 import urllib.error
 import urllib.request
 from typing import Optional, Tuple
@@ -37,6 +38,10 @@ BASE_CANDIDATES = (
 
 _base: Optional[str] = None
 _tried: list = []
+
+#: self_info 的缓存（见 self_info 的说明）
+INFO_TTL = 30.0
+_info_cache: dict = {"at": 0.0, "data": None}
 
 
 def _token() -> str:
@@ -124,14 +129,52 @@ def _request(method: str, path: str, payload: Optional[dict] = None,
         return -1, f"{type(e).__name__}: {e}"
 
 
-def self_info() -> dict:
-    code, body = _request("GET", "/addons/self/info")
-    if code != 200:
-        return {"_error": f"HTTP {code}: {body[:300]}"}
-    try:
-        return json.loads(body).get("data", {})
-    except Exception as e:
-        return {"_error": f"解析失败：{type(e).__name__}: {e}（响应前 200 字符：{body[:200]}）"}
+def self_info(fresh: bool = False, timeout: float = 10.0) -> dict:
+    """自己的 /addons/self/info。
+
+    面板每 5 秒刷新一次状态，而这个接口要跨容器打一次 HTTP；缓存 30 秒足够
+    （保护模式/看门狗不会在一分钟内变），失败结果同样缓存，避免 Supervisor 不可达
+    时每次轮询都去等一轮探测超时。
+    """
+    now = time.monotonic()
+    if not fresh and _info_cache["data"] is not None and now - _info_cache["at"] < INFO_TTL:
+        return _info_cache["data"]
+
+    if not available():
+        data = {"_error": "没有 SUPERVISOR_TOKEN（不在 Supervisor 环境下运行）"}
+    else:
+        code, body = _request("GET", "/addons/self/info", timeout=timeout)
+        if code != 200:
+            data = {"_error": f"HTTP {code}: {body[:300]}"}
+        else:
+            try:
+                data = json.loads(body).get("data", {})
+            except Exception as e:
+                data = {"_error": f"解析失败：{type(e).__name__}: {e}（响应前 200 字符：{body[:200]}）"}
+    _info_cache["at"] = now
+    _info_cache["data"] = data
+    return data
+
+
+def status_summary() -> dict:
+    """给面板用：保护模式与看门狗这两个"外部开关"的真实状态。
+
+    两者都属于**用户级设置**，插件自己改不了（实测 /security 与 /options 都是
+    403，只有管理员令牌能调），所以只能如实展示 + 给出操作指引。
+    """
+    if not available():
+        return {"available": False, "protected": None, "watchdog": None}
+    info = self_info()
+    if info.get("_error"):
+        return {"available": True, "error": info["_error"],
+                "protected": None, "watchdog": None}
+    return {
+        "available": True,
+        "protected": info.get("protected"),
+        "watchdog": info.get("watchdog"),
+        "state": info.get("state"),
+        "version": info.get("version"),
+    }
 
 
 def disable_protection() -> Tuple[bool, str]:
@@ -152,11 +195,12 @@ def restart_self() -> Tuple[bool, str]:
 
 def diagnostics() -> dict:
     """给 /api/diag 用：基地址、探测过程、自身信息（含错误原因）。"""
-    info = self_info()
+    info = self_info(fresh=True)
     return {
         "base": _base or resolve_base(),
         "tried": _tried,
         "token_present": available(),
         "self": info,
         "protected": info.get("protected"),
+        "watchdog": info.get("watchdog"),
     }

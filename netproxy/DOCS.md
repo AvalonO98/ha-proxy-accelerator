@@ -103,6 +103,9 @@ Supervisor ──► dockerd ──► ghcr.io / registry-1.docker.io
 - **实测拉取镜像**：直接调用 Docker API 让 dockerd 真的拉一个镜像（端到端验证）。
   需要 docker socket 可写；只读时面板会如实提示"无法实测"。
 - **变更历史 / 备份**：每次变更都有记录，可对任意一次备份一键回滚。
+- **看门狗**：插件页面上的「看门狗」开关属于 Supervisor 的管理员级设置，**插件无权
+  自己打开**（`/apps/<slug>/options` 返回 403）。关着的时候，插件进程崩溃不会被自动
+  拉起、会一直停在 `error` 状态 —— 面板检测到就会在顶部提示。建议安装后手动打开一次。
 
 ---
 
@@ -113,6 +116,7 @@ Supervisor ──► dockerd ──► ghcr.io / registry-1.docker.io
 | `enabled` | 总开关 |
 | `mode` | `docker_mirror` / `upstream_proxy` / `wireguard` |
 | `mirrors` | Docker Hub 加速镜像（可自定义，每行一个） |
+| `mirror_healthcheck` | 应用前探测镜像源：剔除不可达的、按实测延迟排序后写入（默认开）。dockerd 顺序尝试镜像源，死源会让每次 pull 都白等一轮 |
 | `github_mirrors` | GitHub 加速前缀（可自定义，按顺序回退） |
 | `upstream.type` / `url` / `username` / `password` | 上游代理 |
 | `subscription.url` / `profile` | Clash/mihomo 订阅（`profile` 仅作备注名） |

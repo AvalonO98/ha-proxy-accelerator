@@ -15,9 +15,10 @@ import json
 import os
 import socket
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
-from . import cache, daemonconf, dockerapi, hostops, mihomo, settings, wg
+from . import cache, daemonconf, dockerapi, hostops, mihomo, settings, supervisor_api, wg
 from .daemonconf import Plan
 from .logbus import log
 from .version import VERSION
@@ -28,6 +29,12 @@ RESTART_UNITS = ("netproxy-apply.service",)
 #: 算 NoProxy，而 `ip -o addr` 是个子进程。
 ADDR_TTL = 60.0
 
+#: 镜像源探测：dockerd 会**按顺序**尝试 registry-mirrors，遇到一个不响应的源
+#: 就要等它超时，然后才轮到下一个 —— 也就是说，一个死源能让**每一次** pull 都
+#: 白等几十秒。所以应用前必须探一遍，把死源剔掉、把最快的排前面。
+MIRROR_PROBE_TIMEOUT = 5.0
+MIRROR_PROBE_WORKERS = 4
+
 
 # --------------------------------------------------------------------------- #
 # 期望状态
@@ -35,6 +42,34 @@ ADDR_TTL = 60.0
 def proxies_dict(cfg: dict) -> dict:
     p = f"http://127.0.0.1:{mihomo.PROXY_PORT}"
     return {"http-proxy": p, "https-proxy": p, "no-proxy": no_proxy_list(cfg)}
+
+
+def _probe_mirror(url: str) -> dict:
+    """探测一个镜像源是否可用：/v2/ 只要有 HTTP 响应就算活（401 也是活的）。"""
+    target = (url or "").rstrip("/") + "/v2/"
+    r = mihomo.probe_url(target, timeout=MIRROR_PROBE_TIMEOUT)
+    return {
+        "url": url,
+        "ok": bool(r.get("ok")),
+        "ms": r.get("ms") if isinstance(r.get("ms"), int) else None,
+        "status": r.get("status"),
+        "error": r.get("error"),
+    }
+
+
+def rank_mirrors(mirrors) -> tuple:
+    """并发探测镜像源，返回 (可达且按延迟升序的列表, [(被剔除的源, 原因)])。"""
+    urls = [str(m).strip() for m in (mirrors or []) if str(m).strip()]
+    if not urls:
+        return [], []
+    with ThreadPoolExecutor(max_workers=min(MIRROR_PROBE_WORKERS, len(urls))) as pool:
+        results = list(pool.map(_probe_mirror, urls))
+
+    alive = [r for r in results if r["ok"]]
+    alive.sort(key=lambda r: (r["ms"] if r["ms"] is not None else 10 ** 6))
+    dropped = [(r["url"], r.get("error") or f"HTTP {r.get('status')}")
+               for r in results if not r["ok"]]
+    return [r["url"] for r in alive], dropped
 
 
 def local_addresses(fresh: bool = False) -> list:
@@ -199,6 +234,23 @@ def apply(cfg: dict, job: Optional[dict] = None) -> dict:
         backup_id = bk["id"]
 
     plan = desired_plan(cfg) if cfg["enabled"] else restore_plan(original)
+
+    # ---- 2.5 镜像源健康过滤（只影响本次要写进去的列表，不改用户配置）----
+    mirror_report = None
+    if (cfg["enabled"] and cfg.get("mirror_healthcheck", True)
+            and plan.registry_mirrors):
+        ranked, dropped = rank_mirrors(plan.registry_mirrors)
+        for url, why in dropped:
+            log(f"镜像源不可达，已剔除：{url}（{why}）", "warning", "mirror")
+        if not ranked:
+            raise RuntimeError(
+                "所有 Docker 加速镜像源都探测失败，未改动 daemon.json。"
+                "请在面板「镜像源」里换一个可用的地址，或关掉「应用前探测镜像源」。")
+        if ranked != list(plan.registry_mirrors):
+            log("按实测延迟重排镜像源：" + " → ".join(ranked), "notice", "mirror")
+            plan.registry_mirrors = ranked
+        mirror_report = {"ranked": ranked, "dropped": dropped}
+
     new_obj = daemonconf.build(cur["data"] or {}, plan)
     ok, msg = daemonconf.validate(new_obj)
     if not ok:
@@ -211,8 +263,10 @@ def apply(cfg: dict, job: Optional[dict] = None) -> dict:
                           expected={"registry_mirrors": None, "proxies": None}, plan=plan,
                           pre_raw=cur.get("raw"), pre_existed=cur.get("existed"),
                           pending=False, mode=cfg["mode"])
-            return {"state": "unchanged", "message": "已是插件介入前的状态，无需改动", "changed": []}
-        return {"state": "unchanged", "message": "配置没有变化，无需重新应用", "changed": []}
+            return {"state": "unchanged", "message": "已是插件介入前的状态，无需改动",
+                    "changed": [], "mirrors": mirror_report}
+        return {"state": "unchanged", "message": "配置没有变化，无需重新应用",
+                "changed": [], "mirrors": mirror_report}
 
     need_restart = "proxies" in changed
     expected = _expected_from(new_obj, plan)
@@ -249,6 +303,7 @@ def apply(cfg: dict, job: Optional[dict] = None) -> dict:
             "message": "dockerd 正在重启（所有容器会一起重启，HA 会短暂中断）。"
                        "重启完成后插件会自动校验并在失败时回滚。",
             "changed": changed, "need_restart": True, "expected": expected,
+            "mirrors": mirror_report,
         }
 
     ok, msg = daemonconf.sighup_dockerd()
@@ -275,7 +330,8 @@ def apply(cfg: dict, job: Optional[dict] = None) -> dict:
     settings.push_history("apply", f"方式 {cfg['mode']} 已生效（热加载）",
                           {"changed": changed, "expected": expected, "write": wmsg})
     return {"state": "applied", "message": "已生效并校验通过", "changed": changed,
-            "verify": v, "expected": expected, "write_mode": wmsg}
+            "verify": v, "expected": expected, "write_mode": wmsg,
+            "mirrors": mirror_report}
 
 
 def _save_applied(st: dict, *, active: bool, original: dict, backup_id: Optional[str],
@@ -457,6 +513,8 @@ def status(cfg: dict) -> dict:
         "verify": live_verify,
         "kernel": kern,
         "kernel_arch": mihomo._arch(),
+        "supervisor": supervisor_api.status_summary(),
+        "mirror_healthcheck": bool(cfg.get("mirror_healthcheck", True)),
         "wireguard": (wg.summarize((cfg.get("wireguard") or {}).get("config", ""))
                       if cfg["mode"] == "wireguard" else None),
         "upstream": {"type": up.get("type"), "url": up.get("url"),

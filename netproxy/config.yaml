@@ -1,5 +1,5 @@
 name: "Net Proxy (网络代理)"
-version: "0.1.13"
+version: "0.1.14"
 slug: "netproxy"
 description: >-
   网络代理与镜像加速面板：总开关 + 三种代理方式（Docker 加速镜像 / 上游 HTTP-SOCKS5 代理与订阅 / 内置
@@ -58,6 +58,7 @@ options:
   mirrors:
     - "https://docker.m.daocloud.io"
     - "https://docker.1ms.run"
+  mirror_healthcheck: true
   github_mirrors:
     - "https://ghfast.top/"
   upstream:
@@ -86,6 +87,7 @@ schema:
   mode: list(docker_mirror|upstream_proxy|wireguard)
   mirrors:
     - str
+  mirror_healthcheck: bool
   github_mirrors:
     - str
   upstream:

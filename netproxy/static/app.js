@@ -29,6 +29,9 @@ const I18N = {
     wg_conf: "WireGuard 配置（标准 .conf）", wg_check: "解析并校验",
     advanced: "高级设置", dns: "DNS（每行一个）", kernel_url: "内核下载地址（可空）",
     auto_rollback: "代理不健康时自动回滚并关闭", health_s: "容忍时长(秒)", apply_t: "应用超时(秒)",
+    mirror_hc: "应用前探测镜像源（剔除死源、最快的排前面）",
+    wd_off: "Supervisor 的「看门狗」还没打开：插件进程崩溃后不会被自动拉起（会一直停在 error 状态）。请在插件页面打开「看门狗」开关 —— 插件自己没有权限改这个设置。",
+    mirrors_picked: "本次选用的镜像源",
     btn_apply: "应用并生效", btn_save: "仅保存", btn_install_kernel: "安装/更新内核",
     btn_kernel_restart: "重启内核", btn_rollback: "回滚到应用前",
     btn_test: "检测连通性（直连 vs 代理）", btn_pull: "实测拉取镜像",
@@ -76,6 +79,9 @@ const I18N = {
     wg_conf: "WireGuard config (standard .conf)", wg_check: "Parse & validate",
     advanced: "Advanced", dns: "DNS (one per line)", kernel_url: "Kernel download URL (optional)",
     auto_rollback: "Auto rollback and disable when unhealthy", health_s: "Grace period (s)", apply_t: "Apply timeout (s)",
+    mirror_hc: "Probe mirrors before applying (drop dead ones, fastest first)",
+    wd_off: "Supervisor's watchdog is off: if this add-on crashes it will not be restarted and stays in error state. Turn on the Watchdog switch on the add-on page — the add-on itself is not allowed to change that setting.",
+    mirrors_picked: "Mirrors used this time",
     btn_apply: "Apply & activate", btn_save: "Save only", btn_install_kernel: "Install/update kernel",
     btn_kernel_restart: "Restart kernel", btn_rollback: "Roll back to pre-apply",
     btn_test: "Test connectivity (direct vs proxy)", btn_pull: "Test image pull",
@@ -142,6 +148,7 @@ function readForm() {
   c.dns = lines($("dns").value);
   c.kernel_url = $("kernel-url").value.trim();
   c.auto_rollback = $("auto-rollback").checked;
+  c.mirror_healthcheck = $("mirror-hc").checked;
   c.health_check_seconds = parseInt($("health-s").value || "300", 10);
   c.apply_timeout_seconds = parseInt($("apply-t").value || "180", 10);
   return c;
@@ -162,6 +169,7 @@ function writeForm(cfg) {
   $("dns").value = (cfg.dns || []).join("\n");
   $("kernel-url").value = cfg.kernel_url || "";
   $("auto-rollback").checked = !!cfg.auto_rollback;
+  $("mirror-hc").checked = cfg.mirror_healthcheck === undefined ? true : !!cfg.mirror_healthcheck;
   $("health-s").value = cfg.health_check_seconds || 300;
   $("apply-t").value = cfg.apply_timeout_seconds || 180;
   setMode(cfg.mode || "docker_mirror", false);
@@ -215,6 +223,10 @@ function render() {
         + "Supervisor does not apply host_pid / docker_api in protection mode, and it does not allow an add-on to change its own protection mode (403)."}
       <div style="margin-top:8px"><button onclick="selfHeal()">${T("btn_self_heal")}</button></div>
       ${why}</div>`);
+  }
+  const sup = S.supervisor || {};
+  if (sup.available && sup.watchdog === false) {
+    bs.push(`<div class="banner warn">${T("wd_off")}</div>`);
   }
   if (ap.pending_manual_apply && !ap.pending_verify) {
     bs.push(`<div class="banner warn">${LANG === "zh"
@@ -330,7 +342,13 @@ async function trackJob(job) {
       busy = false;
       if (j && j.state === "failed") alert((LANG === "zh" ? "任务失败：" : "Failed: ") + j.error);
       else if (j && j.result && j.result.message) {
-        $("applyHint").innerHTML = `<div class="banner ok">${esc(j.result.message)}</div>`
+        let extra = "";
+        const m = j.result.mirrors;
+        if (m && (m.ranked || []).length) {
+          extra = `<div class="hint">${T("mirrors_picked")}: ${m.ranked.map((u, i) => (i + 1) + ". " + esc(u)).join(" · ")}`
+            + ((m.dropped || []).length ? `　（已剔除 ${m.dropped.length} 个不可达）` : "") + `</div>`;
+        }
+        $("applyHint").innerHTML = `<div class="banner ok">${esc(j.result.message)}</div>` + extra
           + (j.result.tail ? `<pre class="log">${esc(j.result.tail.join("\n"))}</pre>` : "");
       }
       await refresh();

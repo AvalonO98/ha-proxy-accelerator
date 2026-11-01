@@ -11,6 +11,12 @@ configuration:
   mirrors:
     name: 加速镜像地址
     description: Docker Hub 加速镜像源，可自由增删自定义条目（每行一个）。只替换 registry-mirrors 这一个键，仅对 Docker Hub 生效。
+  mirror_healthcheck:
+    name: 应用前探测镜像源
+    description: >-
+      dockerd 会按顺序尝试 registry-mirrors，遇到不响应的源要先等它超时。开启后，
+      应用前会并发探测每个源，剔除不可达的、把实测最快的排在最前（只影响写进
+      daemon.json 的列表，不改你填的原文）。全部不可达时会拒绝应用。
   github_mirrors:
     name: GitHub 加速源
     description: >-
