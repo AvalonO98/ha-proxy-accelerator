@@ -84,3 +84,41 @@ def test_mirror_healthcheck_default_on_and_togglable():
     assert settings.normalize({"mirror_healthcheck": False})["mirror_healthcheck"] is False
     # 字符串等脏值收敛成布尔，绝不抛
     assert settings.normalize({"mirror_healthcheck": "yes"})["mirror_healthcheck"] is True
+
+
+# --------------------------------------------------------------------------- #
+# 重载落定后再判定（0.1.15：修掉"其实已生效却被判失败 → 回滚"）
+# --------------------------------------------------------------------------- #
+def test_verify_settled_retries_until_ok():
+    calls = []
+
+    def fake(expected_mirrors, expected_proxies, summary=None):
+        calls.append(1)
+        ok = len(calls) >= 3
+        return {"ok": ok, "problems": [] if ok else ["还没生效"]}
+
+    origin = modes.daemonconf.verify
+    modes.daemonconf.verify = fake
+    try:
+        v = modes.verify_settled([], {}, tries=5, interval=0)
+    finally:
+        modes.daemonconf.verify = origin
+    assert v["ok"] is True
+    assert len(calls) == 3          # 前两次失败不算数，第三次通过就收工
+
+
+def test_verify_settled_gives_up_and_reports_last_result():
+    calls = []
+
+    def fake(expected_mirrors, expected_proxies, summary=None):
+        calls.append(1)
+        return {"ok": False, "problems": [f"第{len(calls)}次"]}
+
+    origin = modes.daemonconf.verify
+    modes.daemonconf.verify = fake
+    try:
+        v = modes.verify_settled([], {}, tries=4, interval=0)
+    finally:
+        modes.daemonconf.verify = origin
+    assert v["ok"] is False and v["problems"] == ["第4次"]
+    assert len(calls) == 4

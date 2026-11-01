@@ -300,13 +300,36 @@ def write_daemon_json(obj: dict) -> tuple:
                    + " ｜ ".join(errors[:4]))
 
 
+def mount_source(path: str = DAEMON_JSON) -> Optional[str]:
+    """返回某个挂载点背后的源文件（不在挂载中时返回 None）。"""
+    rc, out, _ = hostops.sh_host(
+        'awk -v p="$1" \'$2==p{print $1; exit}\' /proc/mounts',
+        [hostops.hp(path)], timeout=15)
+    if rc != 0:
+        return None
+    return (out or "").strip() or None
+
+
 def restore_raw(raw: Optional[str], existed: bool) -> tuple:
     """把 daemon.json 恢复成原始状态。
 
-    bind mount 模式下"恢复"就是卸载挂载点——HAOS 自带的那个不可变文件会重新露出来，
-    它本来就是原始内容，所以这种方式天然安全（不会破坏 OS 文件）。
+    ⚠️ 这里的语义是"回滚到上一版内容"，**不是**"拆掉插件的机制"。
+
+    实机踩过的坑（HAOS 18.3）：早期实现只要发现目标被 bind mount，就直接 umount，
+    露出 OS 那个不可变文件 —— 而那个文件里是没有 registry-mirrors 的。于是
+    "一次偶发的校验失败"会导致回滚后镜像源彻底消失，比不回滚还糟。
+    因此：只要手里有"上一版内容"（raw 非空）且能定位到背后的存储文件，就
+    **写回那个文件、保持挂载不变**；只有"插件介入前压根没有这个文件"（raw 为
+    None）时才卸载，让 OS 原始文件露出来。
     """
     if is_mounted(DAEMON_JSON):
+        src = mount_source(DAEMON_JSON)
+        if raw is not None and src:
+            ok, msg = hostops.write_text(src, raw, atomic=False)
+            if ok:
+                log(f"已把上一版配置写回 {src}（保持 bind mount，不卸载）", "notice", "daemon.json")
+                return True, "ok"
+            return False, f"写回 {src} 失败：{msg}"
         ok, msg = release_bind_mount(DAEMON_JSON)
         if not ok:
             return False, f"卸载 {DAEMON_JSON} 的 bind mount 失败：{msg}"

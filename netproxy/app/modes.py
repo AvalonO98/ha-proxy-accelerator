@@ -198,6 +198,27 @@ def _expected_from(new_obj: dict, plan: Plan) -> dict:
     }
 
 
+def verify_settled(expected_mirrors, expected_proxies, tries: int = 8,
+                   interval: float = 1.0) -> dict:
+    """等 dockerd 的 SIGHUP 重载"落定"，再判定校验结果。
+
+    实机踩过（HAOS 18.3 / docker 29.7.2）：SIGHUP 之后立刻查 `/info`，偶尔仍是
+    旧值 —— 实测要 2~3 秒才反映出来。原来只 `sleep(1.5)` 后查一次，于是"其实
+    已经生效"被误判成失败，而失败会触发回滚，代价远大于多等几秒。
+    """
+    v = {"ok": False, "problems": ["未执行校验"]}
+    for i in range(max(1, tries)):
+        cache.invalidate_prefix("docker.")   # 每次都取新的 dockerd 快照
+        v = daemonconf.verify(expected_mirrors, expected_proxies)
+        if v.get("ok"):
+            if i:
+                log(f"dockerd 重载在第 {i + 1} 次校验时才反映出来（约 {i}s）", "info", "daemon.json")
+            return v
+        if i < tries - 1:
+            time.sleep(interval)
+    return v
+
+
 def apply(cfg: dict, job: Optional[dict] = None) -> dict:
     """把配置落到系统。cfg['enabled'] 为 False 时执行还原。"""
     if not hostops.host_available():
@@ -312,10 +333,9 @@ def apply(cfg: dict, job: Optional[dict] = None) -> dict:
         cache.invalidate_prefix("docker.")
         raise RuntimeError(f"SIGHUP 失败，已回滚：{msg}")
     log(msg, "info", "daemon.json")
-    time.sleep(1.5)
-    cache.invalidate_prefix("docker.")
+    time.sleep(1.0)
 
-    v = daemonconf.verify(expected.get("registry_mirrors"), expected.get("proxies"))
+    v = verify_settled(expected.get("registry_mirrors"), expected.get("proxies"))
     if not v["ok"]:
         log(f"校验未通过：{v.get('problems')} → 回滚", "error", "daemon.json")
         daemonconf.restore_raw(cur.get("raw"), cur.get("existed"))
@@ -427,7 +447,7 @@ def recover_on_boot(cfg: dict) -> None:
         log("检测到上次应用在等待 dockerd 重启后的校验，开始校验…", "notice", "recover")
         time.sleep(3)
         expected = applied.get("expected") or {}
-        v = daemonconf.verify(expected.get("registry_mirrors"), expected.get("proxies"))
+        v = verify_settled(expected.get("registry_mirrors"), expected.get("proxies"))
         if v["ok"]:
             applied["pending_verify"] = False
             st["applied"] = applied
