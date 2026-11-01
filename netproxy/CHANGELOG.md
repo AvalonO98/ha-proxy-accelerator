@@ -1,5 +1,26 @@
 # 变更记录
 
+## 0.1.16
+
+**面板"一直执行中 + Cannot read properties of undefined" —— 一个存在很久的前端 bug，实测会清空配置**
+
+1. 根因：`render()` 末尾写的是 `writeForm(S.config)`，而 **`/api/status` 从来不返回
+   `config` 字段**（只有 `/api/config` 返回）。于是每次刷新都会抛
+   `Cannot read properties of undefined (reading 'enabled')`，表单永远填不上。
+   由于 `refresh()` 把异常吞了，界面看起来"正常但空白"。
+2. 连带的严重副作用：表单空着也能点「应用并生效」，`readForm()` 从空 DOM 里读出
+   `auto_rollback=false`、`github_mirrors=[]`、`dns=[]`…… **把用户没看见的字段一起写空**。
+   （真机上就是这么丢掉 `github_mirrors` 和 `auto_rollback` 的。）
+3. 修法：
+   - 新增 `loadConfig()`，表单的真相来源改为 `/api/config` 拉到的 `CFG`；启动时先拉
+     配置再开始轮询状态；
+   - `render()` 只在 `CFG` 存在时填表，`writeForm()` 对 `undefined` 免疫；
+   - `readForm()` 在配置未加载时**直接拒绝提交**，把"清空配置"变成一条明确报错；
+   - `trackJob()` 用 `try/finally` 收尾，无论成功/失败/中途抛错都会清掉 `busy` ——
+     不再出现"一直执行中"只能刷新的情况；任务成功后重新拉一次配置并同步表单。
+4. 说明：这个 bug 与 0.1.15 的服务端改动无关，是面板从早期版本就有的问题，只是
+   之前没人点过「应用」时全靠面板报错后的空表单提交过。
+
 ## 0.1.15
 
 **两个真机踩出来的坑（都是在 HAOS 18.3 / docker 29.7.2 / Supervisor 2026.10 上复现的）**

@@ -136,7 +136,10 @@ function applyI18n() {
 function lines(v) { return (v || "").split("\n").map((s) => s.trim()).filter(Boolean); }
 
 function readForm() {
-  const c = CFG || {};
+  // 表单没填充过就提交 = 把 github_mirrors / dns / auto_rollback 这些"看不见的字段"
+  // 一起写成空值。实测踩过：面板报错后点「应用并生效」，配置被清空。
+  if (!CFG) throw new Error("配置还没加载完，请稍后重试（若一直这样，刷新页面）");
+  const c = CFG;
   c.enabled = $("master").checked;
   c.mode = document.querySelector(".mode.active")?.dataset.mode || c.mode || "docker_mirror";
   c.mirrors = lines($("mirrors").value);
@@ -155,6 +158,7 @@ function readForm() {
 }
 
 function writeForm(cfg) {
+  cfg = cfg || {};                       // 绝不因为 undefined 把整个面板打断
   $("master").checked = !!cfg.enabled;
   $("mirrors").value = (cfg.mirrors || []).join("\n");
   $("gh-mirrors").value = (cfg.github_mirrors || []).join("\n");
@@ -294,7 +298,18 @@ function render() {
   const raw = (S.daemon_json && S.daemon_json.data) ? JSON.stringify(S.daemon_json.data, null, 2) : (S.daemon_json && S.daemon_json.error) || "(不存在)";
   $("rawJson").textContent = raw;
 
-  if (!dirty) { CFG = S.config; writeForm(S.config); }
+  // 表单的真相来源是 CFG（由 /api/config 单独拉取）。
+  // 早先这里写的是 S.config —— 而 /api/status 从来不返回 config，于是
+  // writeForm(undefined) 每次都抛 "Cannot read properties of undefined"，
+  // 表单填不上、busy 卡死，用户还以为"一直在执行"。
+  if (!dirty && CFG) writeForm(CFG);
+}
+
+async function loadConfig() {
+  try {
+    const r = await api("api/config");
+    if (r && r.config) CFG = r.config;
+  } catch (e) { /* 保留现有 CFG，下一次再试 */ }
 }
 
 async function refresh() {
@@ -333,15 +348,16 @@ async function trackJob(job) {
   if (job && job.error) { alert(job.error); await refresh(); return; }
   if (!job || !job.id) { await refresh(); return; }
   busy = true; render();
+  try {
   for (;;) {
     await new Promise((r) => setTimeout(r, 1500));
     let j;
     try { j = (await api("api/job?id=" + encodeURIComponent(job.id))).job; } catch (e) { break; }
     await pollLogs();
     if (!j || j.state !== "running") {
-      busy = false;
       if (j && j.state === "failed") alert((LANG === "zh" ? "任务失败：" : "Failed: ") + j.error);
       else if (j && j.result && j.result.message) {
+        dirty = false;          // 已落盘，允许表单跟服务端同步
         let extra = "";
         const m = j.result.mirrors;
         if (m && (m.ranked || []).length) {
@@ -351,11 +367,16 @@ async function trackJob(job) {
         $("applyHint").innerHTML = `<div class="banner ok">${esc(j.result.message)}</div>` + extra
           + (j.result.tail ? `<pre class="log">${esc(j.result.tail.join("\n"))}</pre>` : "");
       }
-      await refresh();
       return;
     }
   }
-  busy = false; await refresh();
+  } finally {
+    // 无论成功、失败还是中途抛错，界面都不能停在"执行中"（实测卡死过一次：
+    // render() 抛错把 busy 永久留在 true，用户只能刷新页面）
+    busy = false;
+    await loadConfig();     // 应用可能改了 enabled / 镜像源，重新拉一次表单
+    await refresh();
+  }
 }
 
 /* ------------------------------ 事件绑定 ------------------------------ */
@@ -483,7 +504,8 @@ async function selfHeal() {
 
 applyI18n();
 bind();
-refresh();
+// 先拿配置把表单填好，再开始轮询状态：表单为空时提交会清空看不见的字段
+loadConfig().then(refresh);
 setInterval(refresh, 5000);
 setInterval(pollLogs, 2000);
 document.addEventListener("visibilitychange", () => {
