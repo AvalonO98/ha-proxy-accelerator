@@ -26,11 +26,21 @@ import urllib.parse
 import urllib.request
 from typing import Optional
 
-from . import settings, wg
+from . import cache, settings, wg
 from .logbus import log
 
 PROXY_PORT = 7890
 CTRL_PORT = 9090
+
+#: 内核版本号字符串基本不变，缓存久一点没关系
+VERSION_TTL = 300.0
+
+#: 端口探测的缓存：环回口上"没人监听"时，有些环境不会立刻回 RST，而是让 connect
+#: 一直挂到超时（本机 Windows 实测每次约 1 秒）—— 两个探测就能把一次 /api/status
+#: 拖到 2 秒，面板 5 秒一轮直接被打满。这里既缩短超时，也缓存结果；内核 start/stop
+#: 会显式失效。
+PORT_TTL = 5.0
+PORT_PROBE_TIMEOUT = 0.25
 
 _BUNDLED = "/opt/netproxy/bin/mihomo"
 _SHARE = "/share/netproxy/mihomo"
@@ -68,9 +78,18 @@ def kernel_path() -> Optional[str]:
 
 
 def kernel_version(path: Optional[str] = None) -> str:
-    p = path or kernel_path()
+    """内核版本（会真的执行一次 `mihomo -v`）。
+
+    status() 每 5 秒被轮询一次，而 fork 一个进程的代价在 ARM 宿主上不小，
+    因此这里按内核路径缓存；安装/更新内核后调用方需 invalidate_prefix("mihomo.")。
+    """
+    p = path or kernel_path() or ""
     if not p:
         return ""
+    return cache.get(f"mihomo.version:{p}", VERSION_TTL, lambda: _kernel_version(p))
+
+
+def _kernel_version(p: str) -> str:
     try:
         r = subprocess.run([p, "-v"], capture_output=True, timeout=15)
         out = (r.stdout or b"").decode("utf-8", "replace") + (r.stderr or b"").decode("utf-8", "replace")
@@ -227,6 +246,8 @@ def install(explicit_url: str = "", mirrors=None, version: str = "", progress=No
             errors.append(f"{label}: {msg}")
             log(f"该源失败：{msg}", "warning", "mihomo")
             continue
+        # 新文件可能覆盖了旧的（或旧的探测结果是"无法执行"），必须让版本缓存失效
+        cache.invalidate_prefix("mihomo.version:")
         ver = kernel_version(dest)
         if not ver:
             _safe_remove(dest)
@@ -523,6 +544,7 @@ def start() -> tuple:
             _last_error = "进程已退出"
             return False, f"内核启动后立即退出：{_last_error}"
         if _port_open("127.0.0.1", PROXY_PORT):
+            cache.invalidate_prefix("mihomo.listen:")
             log(f"mihomo 已监听 127.0.0.1:{PROXY_PORT}", "notice", "mihomo")
             return True, "ok"
         time.sleep(0.25)
@@ -536,6 +558,7 @@ def stop() -> tuple:
             return True, "未在运行"
         p = _proc
         _proc = None
+    cache.invalidate_prefix("mihomo.listen:")
     try:
         p.terminate()
         for _ in range(20):
@@ -564,6 +587,17 @@ def _port_open(host: str, port: int, timeout: float = 1.0) -> bool:
             pass
 
 
+def port_open(port: int, host: str = "127.0.0.1", timeout: float = 1.0) -> bool:
+    """对外暴露的端口探测（看门狗用，避免依赖私有名；不缓存，要真实时值）。"""
+    return _port_open(host, port, timeout)
+
+
+def _probe_cached(port: int) -> bool:
+    """面板用的端口探测：短超时 + 缓存，避免轮询把时间耗在 connect 上。"""
+    return cache.get(f"mihomo.listen:{port}", PORT_TTL,
+                     lambda: _port_open("127.0.0.1", port, PORT_PROBE_TIMEOUT))
+
+
 def status() -> dict:
     k = kernel_path()
     return {
@@ -573,8 +607,8 @@ def status() -> dict:
         "running": alive(),
         "pid": (_proc.pid if alive() else None),
         "listen_port": PROXY_PORT,
-        "listen_ok": _port_open("127.0.0.1", PROXY_PORT),
-        "controller_ok": _port_open("127.0.0.1", CTRL_PORT),
+        "listen_ok": _probe_cached(PROXY_PORT),
+        "controller_ok": _probe_cached(CTRL_PORT),
         "config_path": config_path(),
         "config_exists": os.path.exists(config_path()),
         "last_error": _last_error,

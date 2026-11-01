@@ -22,7 +22,7 @@ class Watchdog(threading.Thread):
     def _healthy(self) -> tuple:
         if not mihomo.alive():
             return False, "内核进程不在运行"
-        if not mihomo._port_open("127.0.0.1", mihomo.PROXY_PORT):
+        if not mihomo.port_open(mihomo.PROXY_PORT):
             return False, f"{mihomo.PROXY_PORT} 端口未监听"
         r = mihomo.http_fetch(HEALTH_URL, via_proxy=True, timeout=10)
         if not r.get("ok"):

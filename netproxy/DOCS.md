@@ -115,7 +115,7 @@ Supervisor ──► dockerd ──► ghcr.io / registry-1.docker.io
 | `mirrors` | Docker Hub 加速镜像（可自定义，每行一个） |
 | `github_mirrors` | GitHub 加速前缀（可自定义，按顺序回退） |
 | `upstream.type` / `url` / `username` / `password` | 上游代理 |
-| `subscription.url` / `name` | Clash/mihomo 订阅 |
+| `subscription.url` / `profile` | Clash/mihomo 订阅（`profile` 仅作备注名） |
 | `wireguard.config` | WireGuard `.conf` 全文 |
 | `kernel_url` | 自定义内核下载地址（留空 = 自动选源） |
 | `kernel_version` | 指定 mihomo 版本（GitHub API 不可达时用） |
@@ -123,7 +123,7 @@ Supervisor ──► dockerd ──► ghcr.io / registry-1.docker.io
 | `auto_rollback` | 代理不健康时自动回滚并关闭 |
 | `health_check_seconds` | 健康检查容忍时长（默认 300 秒） |
 | `apply_timeout_seconds` | 重启 dockerd 后等待恢复的最长时间（默认 180 秒） |
-| `log_level` | 日志级别 |
+| `log_level` | 日志级别：面板运行日志按此过滤（默认 `info`，`debug` 会带上 HTTP 访问日志） |
 
 面板里改的值保存在 `/data`，与原生选项互不覆盖（面板优先）。
 

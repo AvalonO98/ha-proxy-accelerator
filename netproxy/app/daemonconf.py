@@ -21,12 +21,19 @@ import time
 from dataclasses import dataclass, field
 from typing import Optional
 
-from . import dockerapi, hostops, settings
+from . import cache, dockerapi, hostops, settings
 from .logbus import log
 
 DAEMON_JSON = "/etc/docker/daemon.json"
 MANAGED_KEYS = ("registry-mirrors", "proxies")
 PROXY_KEYS = ("http-proxy", "https-proxy", "no-proxy", "ftp-proxy", "all-proxy")
+
+#: 挂载状态 / 备份列表 / 单元状态的缓存时长。这些值在写操作后会显式失效，
+#: 平时只用于扛住面板 5 秒一轮的重复查询。
+MOUNT_TTL = 3.0
+BACKUP_LIST_TTL = 10.0
+UNIT_TTL = 3.0
+APPLY_RESULT_TTL = 1.5
 
 #: HAOS 上 /etc 位于只读的不可变 rootfs（HAOS 自带的 /etc/docker/daemon.json
 #: 就是那个不可变文件），直接写会得到 "Read-only file system"。
@@ -169,11 +176,16 @@ def backup(current: dict, label: str = "manual") -> dict:
     }
     with open(path, "w", encoding="utf-8") as f:
         json.dump(rec, f, ensure_ascii=False, indent=2)
+    cache.invalidate_prefix("daemon.backups")
     log(f"已备份现有 daemon.json → {path.name}", "info", "daemon.json")
     return rec
 
 
 def list_backups(limit: int = 20) -> list:
+    return cache.get(f"daemon.backups:{limit}", BACKUP_LIST_TTL, lambda: _list_backups(limit))
+
+
+def _list_backups(limit: int) -> list:
     settings.ensure_dirs()
     out = []
     for p in sorted(settings.BACKUP_DIR.glob("daemon-*.json"), reverse=True)[:limit]:
@@ -209,6 +221,11 @@ def load_backup(bid: str) -> Optional[dict]:
 # 写（底层，不含重启）
 # --------------------------------------------------------------------------- #
 def is_mounted(path: str = DAEMON_JSON) -> bool:
+    return cache.get(f"daemon.mounted:{path}", MOUNT_TTL,
+                     lambda: _is_mounted_uncached(path))
+
+
+def _is_mounted_uncached(path: str) -> bool:
     rc, _, _ = hostops.sh_host(_AWK_MOUNTED, [hostops.hp(path)], timeout=15)
     return rc == 0
 
@@ -226,6 +243,7 @@ def _bind_mount(src: str, dst: str) -> tuple:
     if is_mounted(dst):
         hostops.run_host(["umount", hostops.hp(dst)], timeout=20)
     rc, out, err = hostops.run_host(["mount", "--bind", hostops.hp(src), hostops.hp(dst)], timeout=25)
+    cache.invalidate(f"daemon.mounted:{dst}")
     if rc != 0:
         return False, ((err or out).strip() or f"rc={rc}")[:250]
     if not is_mounted(dst):
@@ -237,6 +255,7 @@ def release_bind_mount(dst: str = DAEMON_JSON) -> tuple:
     if not is_mounted(dst):
         return True, "未挂载"
     rc, out, err = hostops.run_host(["umount", hostops.hp(dst)], timeout=20)
+    cache.invalidate(f"daemon.mounted:{dst}")
     if rc != 0:
         return False, ((err or out).strip() or f"rc={rc}")[:250]
     return True, "ok"
@@ -429,6 +448,7 @@ def restart_dockerd_detached(timeout: int, backup_raw: Optional[str] = None,
         hostops.write_text(hostops.hp(HOST_APPLY_ABSENT), "1\n", atomic=False)
 
     hostops.remove(hostops.hp(HOST_APPLY_RESULT))
+    cache.invalidate("daemon.apply_result", "daemon.unit_active")
     ok, msg = hostops.write_text(hostops.hp(HOST_APPLY_SCRIPT), _apply_script(timeout), atomic=False)
     if not ok:
         return False, f"写入宿主脚本失败：{msg}"
@@ -446,6 +466,10 @@ def restart_dockerd_detached(timeout: int, backup_raw: Optional[str] = None,
 
 
 def read_apply_result() -> Optional[dict]:
+    return cache.get("daemon.apply_result", APPLY_RESULT_TTL, _read_apply_result)
+
+
+def _read_apply_result() -> Optional[dict]:
     raw = hostops.read_text(hostops.hp(HOST_APPLY_RESULT))
     if not raw:
         return None
@@ -456,6 +480,10 @@ def read_apply_result() -> Optional[dict]:
 
 
 def unit_active() -> Optional[bool]:
+    return cache.get("daemon.unit_active", UNIT_TTL, _unit_active)
+
+
+def _unit_active() -> Optional[bool]:
     rc, out, _ = hostops.run_host(["systemctl", "is-active", "netproxy-apply.service"], timeout=15)
     state = out.strip()
     if not state:
@@ -477,9 +505,14 @@ def _norm_url(u: str) -> str:
     return (u or "").strip().rstrip("/")
 
 
-def verify(expected_mirrors: Optional[list], expected_proxies: Optional[dict]) -> dict:
-    """用 dockerd 的实时配置反过来校验。"""
-    s = dockerapi.summarize()
+def verify(expected_mirrors: Optional[list], expected_proxies: Optional[dict],
+           summary: Optional[dict] = None) -> dict:
+    """用 dockerd 的实时配置反过来校验。
+
+    summary 可传入调用方已经取好的 `dockerapi.summarize()` 结果，避免一次
+    status 请求里对 dockerd 做两遍 /info + /version。
+    """
+    s = summary if isinstance(summary, dict) else dockerapi.summarize()
     if not s.get("available"):
         return {"ok": False, "error": s.get("error"), "detail": "无法读取 dockerd 实时配置"}
 

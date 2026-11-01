@@ -21,6 +21,8 @@ MODULES = [
     "test_daemonconf",
     "test_mihomo_config",
     "test_mirrors",
+    "test_cache",
+    "test_app",
 ]
 
 

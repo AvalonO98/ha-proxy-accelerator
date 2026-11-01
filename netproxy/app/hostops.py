@@ -20,8 +20,14 @@ import subprocess
 import threading
 from typing import Optional, Sequence, Tuple
 
+from . import cache
+
 FAKE_ROOT = os.environ.get("NETPROXY_HOST_ROOT")  # 测试注入
 _GLOBAL_PID1 = 1
+
+#: capability_report 会跑 3~5 个子进程（父目录可写探测、/proc/1/comm 等），
+#: 面板 5 秒一轮没必要重算；写操作或用「诊断」时可传 fresh=True 绕过。
+CAPABILITY_TTL = 5.0
 
 _mode: Optional[str] = None
 _mode_lock = threading.Lock()
@@ -324,8 +330,15 @@ def signal_pid(pid: int, sig: int) -> Tuple[bool, str]:
         return False, f"{type(e).__name__}: {e}"
 
 
-def capability_report(paths: Sequence[str] = ()) -> dict:
+def capability_report(paths: Sequence[str] = (), fresh: bool = False) -> dict:
     """能力探测：面板首页展示"能不能真正落地"。"""
+    key = "hostops.capability:" + ",".join(paths)
+    if fresh:
+        cache.invalidate(key)
+    return cache.get(key, CAPABILITY_TTL, lambda: _capability_report(paths))
+
+
+def _capability_report(paths: Sequence[str]) -> dict:
     mode = namespace_mode()
     pid1 = _read_local("/proc/1/comm") or "?"
     reason = ""

@@ -58,7 +58,8 @@ def submit(kind: str, fn: Callable[[dict], dict], mutating: bool = True) -> dict
             return {"error": "已有任务在执行中，请等它结束"}
         if not mutating and any(j.get("mutating") for j in running):
             return {"error": "有写操作任务在执行中，请等它结束"}
-    seq_start = LOG.tail(1)[0]["seq"] if LOG.tail(1) else 0
+    tail = LOG.tail(1)
+    seq_start = tail[0]["seq"] if tail else 0
     job = {
         "id": _new_id(),
         "kind": kind,

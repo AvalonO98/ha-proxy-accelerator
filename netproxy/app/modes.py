@@ -17,11 +17,16 @@ import socket
 import time
 from typing import Optional
 
-from . import daemonconf, dockerapi, hostops, mihomo, settings, wg
+from . import cache, daemonconf, dockerapi, hostops, mihomo, settings, wg
 from .daemonconf import Plan
 from .logbus import log
+from .version import VERSION
 
 RESTART_UNITS = ("netproxy-apply.service",)
+
+#: 本机地址几乎不变（除非 DHCP 续租），缓存一分钟；面板每次刷新都要用它
+#: 算 NoProxy，而 `ip -o addr` 是个子进程。
+ADDR_TTL = 60.0
 
 
 # --------------------------------------------------------------------------- #
@@ -32,8 +37,14 @@ def proxies_dict(cfg: dict) -> dict:
     return {"http-proxy": p, "https-proxy": p, "no-proxy": no_proxy_list(cfg)}
 
 
-def local_addresses() -> list:
+def local_addresses(fresh: bool = False) -> list:
     """本机地址（容器在宿主网络命名空间里，拿到的就是宿主地址）。"""
+    if fresh:
+        cache.invalidate("modes.addresses")
+    return cache.get("modes.addresses", ADDR_TTL, _local_addresses)
+
+
+def _local_addresses() -> list:
     ips = set()
     try:
         host = socket.gethostbyname(socket.gethostname())
@@ -217,6 +228,8 @@ def apply(cfg: dict, job: Optional[dict] = None) -> dict:
     ok, wmsg = daemonconf.write_daemon_json(new_obj)
     if not ok:
         raise RuntimeError(f"写入 daemon.json 失败：{wmsg}")
+    # 文件变了，dockerd 的"实时配置"快照必然过期
+    cache.invalidate_prefix("docker.")
     if wmsg.startswith("bind:"):
         log(f"HAOS 的 /etc 只读，已改用 bind mount 落地：{wmsg[5:]}", "notice", "daemon.json")
 
@@ -228,6 +241,7 @@ def apply(cfg: dict, job: Optional[dict] = None) -> dict:
         if not ok:
             log("重启 dockerd 未能启动，立刻回滚文件", "error", "daemon.json")
             daemonconf.restore_raw(cur.get("raw"), cur.get("existed"))
+            cache.invalidate_prefix("docker.")
             raise RuntimeError(f"重启 dockerd 失败，已回滚：{msg}")
         log(msg, "notice", "daemon.json")
         return {
@@ -240,14 +254,17 @@ def apply(cfg: dict, job: Optional[dict] = None) -> dict:
     ok, msg = daemonconf.sighup_dockerd()
     if not ok:
         daemonconf.restore_raw(cur.get("raw"), cur.get("existed"))
+        cache.invalidate_prefix("docker.")
         raise RuntimeError(f"SIGHUP 失败，已回滚：{msg}")
     log(msg, "info", "daemon.json")
     time.sleep(1.5)
+    cache.invalidate_prefix("docker.")
 
     v = daemonconf.verify(expected.get("registry_mirrors"), expected.get("proxies"))
     if not v["ok"]:
         log(f"校验未通过：{v.get('problems')} → 回滚", "error", "daemon.json")
         daemonconf.restore_raw(cur.get("raw"), cur.get("existed"))
+        cache.invalidate_prefix("docker.")
         daemonconf.sighup_dockerd()
         raise RuntimeError(f"配置校验未通过，已回滚：{v.get('problems')}")
 
@@ -405,7 +422,9 @@ def status(cfg: dict) -> dict:
     # 用户自己原本就有的镜像源，那不是错误。
     live_verify = None
     if d.get("available") and applied.get("active"):
-        live_verify = daemonconf.verify(expected.get("registry_mirrors"), expected.get("proxies"))
+        # 复用上面那一份摘要：一次 status 只跟 dockerd 说一次话
+        live_verify = daemonconf.verify(expected.get("registry_mirrors"),
+                                        expected.get("proxies"), summary=d)
 
     kern = mihomo.status()
     plan = None
@@ -416,6 +435,7 @@ def status(cfg: dict) -> dict:
 
     up = cfg.get("upstream") or {}
     return {
+        "version": VERSION,
         "enabled": bool(cfg["enabled"]),
         "mode": cfg["mode"],
         "config_source": cfg.get("_source"),

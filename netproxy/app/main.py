@@ -19,21 +19,42 @@ import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from . import (daemonconf, dockerapi, health, hostops, jobs, mihomo, modes,
-               settings, supervisor_api, wg)
+from . import (cache, daemonconf, dockerapi, health, hostops, jobs, mihomo,
+               modes, settings, supervisor_api, wg)
 from .logbus import LOG, log
+from .version import VERSION
 
 APP_DIR = os.environ.get("NETPROXY_APP", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 STATIC_DIR = os.path.join(APP_DIR, "static")
 PORT = int(os.environ.get("NETPROXY_PORT", "8099"))
+
+#: POST 请求体上限。面板本身只会提交几 KB 的 JSON（WireGuard 配置最长也就几 KB），
+#: 没有上限时一个 Content-Length: 2GB 的请求就能把插件的内存吃光。
+MAX_BODY_BYTES = 1 << 20
+
+
+class BodyTooLarge(Exception):
+    """请求体超限：由 _dispatch 统一翻成 413。"""
 
 
 def _json_default(o):
     return str(o)
 
 
+def _job_reply(handler: "Handler", job: dict):
+    """统一的"任务已提交"应答。
+
+    jobs.submit() 在锁冲突时会返回 {"error": ...}（没有 id）。旧代码把它包成
+    {"job": {...}} 直接返回 200，前端只看到"没有 id"就静默 refresh —— 用户点了
+    按钮却什么都没发生。现在明确回 409，前端会弹出原因。
+    """
+    if job.get("error"):
+        return handler._err(409, job["error"])
+    return handler._json({"job": job})
+
+
 class Handler(BaseHTTPRequestHandler):
-    server_version = "netproxy/0.1.0"
+    server_version = f"netproxy/{VERSION}"
     protocol_version = "HTTP/1.1"
 
     # ----------------------------------------------------------------- #
@@ -83,12 +104,26 @@ class Handler(BaseHTTPRequestHandler):
             n = 0
         if n <= 0:
             return {}
+        if n > MAX_BODY_BYTES:
+            # 不缓冲，但要读掉：否则 HTTP/1.1 长连接上剩余字节会被当成下一个请求
+            log(f"拒绝超限请求体：{n} 字节 > {MAX_BODY_BYTES}", "warning", "http")
+            self._discard(n)
+            raise BodyTooLarge(f"请求体 {n} 字节超过上限 {MAX_BODY_BYTES}")
         raw = self.rfile.read(n)
         try:
             data = json.loads(raw.decode("utf-8"))
             return data if isinstance(data, dict) else {"value": data}
         except Exception:
             return {}
+
+    def _discard(self, n: int) -> None:
+        """读掉（丢弃）请求体，保证 HTTP/1.1 长连接不错位。"""
+        left = n
+        while left > 0:
+            chunk = self.rfile.read(min(left, 65536))
+            if not chunk:
+                break
+            left -= len(chunk)
 
     def _norm_path(self) -> str:
         p = urlparse(self.path).path
@@ -120,6 +155,8 @@ class Handler(BaseHTTPRequestHandler):
             if path.startswith("/api/"):
                 return self._api(method, path)
             return self._static(path)
+        except BodyTooLarge as e:
+            return self._err(413, str(e))
         except Exception as e:
             log(f"请求处理异常 {method} {path}: {type(e).__name__}: {e}", "error", "http")
             log(traceback.format_exc(limit=6), "debug", "http")
@@ -157,6 +194,12 @@ class Handler(BaseHTTPRequestHandler):
             cfg["enabled"] = want
             settings.save_config(cfg)
             job = _submit_apply(prev_enabled=prev)
+            if job.get("error"):
+                # 任务被拒时配置已经写进去了：把开关拨回去，否则界面与实况不一致
+                cfg = settings.load_config()
+                cfg["enabled"] = prev
+                settings.save_config(cfg)
+                return self._err(409, job["error"])
             return self._json({"enabled": want, "job": job})
 
         if path == "/api/apply" and method == "POST":
@@ -171,32 +214,38 @@ class Handler(BaseHTTPRequestHandler):
                 cfg["enabled"] = bool(body["enabled"])
                 settings.save_config(cfg)
             # 失败时把总开关回滚到应用之前的值——否则界面会显示"已开启"但实际没生效
-            return self._json({"job": _submit_apply(prev_enabled=prev)})
+            job = _submit_apply(prev_enabled=prev)
+            if job.get("error"):
+                return self._err(409, job["error"])
+            return self._json({"job": job})
 
         if path == "/api/rollback" and method == "POST":
             body = self._body()
             bid = body.get("backup_id")
-            return self._json({"job": jobs.submit("rollback", lambda job: _do_rollback(bid, job))})
+            return _job_reply(self, jobs.submit("rollback", lambda job: _do_rollback(bid, job)))
 
         if path == "/api/kernel/install" and method == "POST":
             body = self._body()
             url = (body.get("url") or cfg.get("kernel_url") or "").strip()
-            return self._json({"job": jobs.submit("kernel-install",
-                                                  lambda job: _do_kernel_install(url, job))})
+            return _job_reply(self, jobs.submit("kernel-install",
+                                                lambda job: _do_kernel_install(url, job)))
 
         if path == "/api/kernel/restart" and method == "POST":
-            return self._json({"job": jobs.submit("kernel-restart", lambda job: _do_kernel_restart(job))})
+            return _job_reply(self, jobs.submit("kernel-restart",
+                                                lambda job: _do_kernel_restart(job)))
 
         if path == "/api/test" and method == "POST":
-            return self._json({"job": jobs.submit("connectivity",
-                                                  lambda job: modes.connectivity_test(settings.load_config()),
-                                                  mutating=False)})
+            return _job_reply(self, jobs.submit("connectivity",
+                                                lambda job: modes.connectivity_test(
+                                                    settings.load_config()),
+                                                mutating=False))
 
         if path == "/api/pull-test" and method == "POST":
             body = self._body()
             image = (body.get("image") or "hello-world:latest").strip()
-            return self._json({"job": jobs.submit("pull-test",
-                                                  lambda job: _do_pull_test(image, job), mutating=False)})
+            return _job_reply(self, jobs.submit("pull-test",
+                                                lambda job: _do_pull_test(image, job),
+                                                mutating=False))
 
         if path == "/api/logs" and method == "GET":
             since = int((q.get("since") or ["0"])[0] or 0)
@@ -231,20 +280,33 @@ class Handler(BaseHTTPRequestHandler):
         return self._err(404, f"未知接口 {path}")
 
     def _static(self, path: str):
-        if path in ("/", "", "/index.html"):
-            rel = "index.html"
-        else:
-            rel = path.lstrip("/")
-        full = os.path.normpath(os.path.join(STATIC_DIR, rel))
-        if not full.startswith(STATIC_DIR) or not os.path.isfile(full):
-            full = os.path.join(STATIC_DIR, "index.html")
-            if not os.path.isfile(full):
-                return self._err(404, "静态资源缺失")
+        full = static_file(path)
+        if full is None:
+            return self._err(404, "静态资源缺失")
         ctype = mimetypes.guess_type(full)[0] or "application/octet-stream"
         if ctype.startswith("text/") or ctype in ("application/javascript", "application/json"):
             ctype += "; charset=utf-8"
         with open(full, "rb") as f:
             self._send(200, f.read(), ctype)
+
+
+def static_file(path: str, root: str | None = None) -> str | None:
+    """把请求路径映射成静态文件路径；越界或不存在时退化到 index.html。
+
+    用 commonpath 而不是 startswith 做越界判断：后者会放过 /app/staticX
+    这种同前缀的兄弟目录（`os.path.normpath` 之后仍是合法前缀匹配）。
+    """
+    root = os.path.realpath(root or STATIC_DIR)
+    rel = "index.html" if path in ("/", "", "/index.html") else path.lstrip("/")
+    full = os.path.realpath(os.path.join(root, rel))
+    try:
+        inside = os.path.commonpath([root, full]) == root
+    except ValueError:      # 不同盘符（Windows 下测试用）
+        inside = False
+    if inside and os.path.isfile(full):
+        return full
+    index = os.path.join(root, "index.html")
+    return index if os.path.isfile(index) else None
 
 
 # --------------------------------------------------------------------------- #
@@ -281,6 +343,8 @@ def _do_rollback(backup_id, job) -> dict:
         ok, msg = daemonconf.restore_raw(applied.get("pre_raw"), bool(applied.get("pre_existed")))
     if not ok:
         raise RuntimeError(f"恢复失败：{msg}")
+    # 文件已还原，dockerd 的实时配置快照过期
+    cache.invalidate_prefix("docker.")
 
     cfg = settings.load_config()
     cfg["enabled"] = False
@@ -307,6 +371,12 @@ def _do_rollback(backup_id, job) -> dict:
 
 
 def _do_kernel_install(url: str, job) -> dict:
+    """下载/更新 mihomo 内核。
+
+    注意：这里必须先读配置再下载 —— 0.1.12 在下载参数里引用了后面才赋值的
+    `cfg`，导致「安装/更新内核」按钮 100% 抛 UnboundLocalError（界面只显示任务失败）。
+    """
+    cfg = settings.load_config()
     last = {"pct": -1}
 
     def progress(got, total):
@@ -322,7 +392,6 @@ def _do_kernel_install(url: str, job) -> dict:
                              version=cfg.get("kernel_version"), progress=progress)
     if not ok:
         raise RuntimeError(msg)
-    cfg = settings.load_config()
     if cfg.get("enabled") and cfg.get("mode") in ("upstream_proxy", "wireguard"):
         ok, msg2 = modes.ensure_kernel_running(cfg)
         if not ok:
@@ -386,11 +455,14 @@ def _diag(cfg: dict) -> dict:
     """给排查用的全量现场（不隐去密钥，但仅限内网/ingress 访问）。"""
     cur = daemonconf.read_current()
     return {
+        "version": VERSION,
         "python": sys.version,
         "argv": sys.argv,
         "data_dir": str(settings.DATA_DIR),
         "namespace_mode": hostops.namespace_mode(),
-        "capability": hostops.capability_report([daemonconf.DAEMON_JSON, mihomo._SHARE]),
+        "capability": hostops.capability_report([daemonconf.DAEMON_JSON, mihomo._SHARE],
+                                                fresh=True),
+        "cache": cache.stats(),
         "host_daemon_json_raw": cur.get("raw"),
         "host_daemon_json_ok": cur.get("ok"),
         "host_daemon_json_error": cur.get("error"),

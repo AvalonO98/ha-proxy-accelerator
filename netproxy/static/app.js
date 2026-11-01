@@ -105,13 +105,16 @@ const T = (k) => (I18N[LANG][k] !== undefined ? I18N[LANG][k] : k);
 const $ = (id) => document.getElementById(id);
 
 async function api(path, body) {
+  // 统一补 "./"：面板挂在 /api/hassio_ingress/<token>（末尾可能没有斜杠）时，
+  // 裸相对路径 "api/status" 会被解析成 /api/hassio_ingress/api/status 而 404。
+  const url = (path.startsWith("./") || path.startsWith("/")) ? path : "./" + path;
   const opt = { headers: {} };
   if (body !== undefined) {
     opt.method = "POST";
     opt.headers["Content-Type"] = "application/json";
     opt.body = JSON.stringify(body);
   }
-  const r = await fetch(path, opt);
+  const r = await fetch(url, opt);
   let data = null;
   try { data = await r.json(); } catch (e) { data = { error: "响应不是 JSON" }; }
   if (!r.ok) throw new Error((data && data.error) || ("HTTP " + r.status));
@@ -184,6 +187,9 @@ function esc(s) {
 function render() {
   if (!S) return;
   const cap = S.capability || {}, d = S.docker || {}, k = S.kernel || {}, ap = S.applied || {};
+
+  const ver = $("ver");
+  if (ver && S.version) ver.textContent = "v" + S.version;
 
   // 状态徽标
   const pill = $("statePill");
@@ -280,6 +286,8 @@ function render() {
 }
 
 async function refresh() {
+  // 标签页在后台时不做无谓轮询（手机上尤其明显），回来时立刻补一次
+  if (document.hidden) return;
   try {
     S = await api("api/status");
     render();
@@ -287,7 +295,7 @@ async function refresh() {
 }
 
 async function pollLogs() {
-  if (paused) return;
+  if (paused || document.hidden) return;
   try {
     const r = await api("api/logs?since=" + logSeq);
     if (r.logs && r.logs.length) {
@@ -308,6 +316,9 @@ async function pollLogs() {
 }
 
 async function trackJob(job) {
+  // 后端在"已有任务在执行"时会回 409；这里再兜一层：历史上它曾把
+  // {error:...} 当 job 返回，界面上表现为"点了按钮什么都没发生"。
+  if (job && job.error) { alert(job.error); await refresh(); return; }
   if (!job || !job.id) { await refresh(); return; }
   busy = true; render();
   for (;;) {
@@ -457,3 +468,6 @@ bind();
 refresh();
 setInterval(refresh, 5000);
 setInterval(pollLogs, 2000);
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) { refresh(); pollLogs(); }
+});

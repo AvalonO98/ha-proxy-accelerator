@@ -16,7 +16,13 @@ import os
 import socket
 from typing import Optional, Tuple
 
+from . import cache
+
 SOCKET_PATHS = ("/var/run/docker.sock", "/run/docker.sock")
+
+#: summarize 的缓存时长：面板 5 秒一轮，2 秒足够挡住重复调用（status 里
+#: 原本会对 summarize 调用两次：一次给面板、一次给 verify）。
+SUMMARY_TTL = 2.0
 
 _api_version: Optional[str] = None
 
@@ -101,8 +107,18 @@ def version() -> dict:
     return data
 
 
-def summarize() -> dict:
-    """面板用的精简状态：镜像源与代理是否真的生效。"""
+def summarize(fresh: bool = False) -> dict:
+    """面板用的精简状态：镜像源与代理是否真的生效。
+
+    结果按 SUMMARY_TTL 缓存；写配置后调用方应 `invalidate_prefix("docker.")`
+    或传 fresh=True，避免读到改动前的快照。
+    """
+    if fresh:
+        cache.invalidate("docker.summarize")
+    return cache.get("docker.summarize", SUMMARY_TTL, _summarize)
+
+
+def _summarize() -> dict:
     i = info()
     if "_error" in i:
         return {"available": False, "error": i["_error"]}
