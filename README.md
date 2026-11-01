@@ -140,6 +140,43 @@ repository.yaml      # HA add-on 仓库描述
 python tests/run_tests.py     # 无需 pytest / 第三方依赖
 ```
 
+## 许可证
+
+[MIT](LICENSE) © 2026 HA Proxy Accelerator Team。
+
+可自由使用、修改、再分发（含商用），只需保留版权声明与许可声明；软件按"现状"提供，不附带担保。
+
+## 参考与依赖
+
+**仓库里没有第三方代码文件**：`netproxy/app` 的后端只用 Python 标准库（`import` 全来自
+stdlib，没有 `requirements.txt`），测试也不依赖 pytest。构建期与运行时用到的东西如下：
+
+| 组件 | 关系 | 许可证 |
+|---|---|---|
+| [mihomo (Clash.Meta)](https://github.com/MetaCubeX/mihomo) | **可选**内核，由插件在运行时下载到 `/data`，不随镜像分发；以独立进程 + 本地端口调用，不与本项目链接 | MIT |
+| Home Assistant Supervisor | 运行平台：apps API / ingress 面板 / `host_pid` / `docker_api` | Apache-2.0 |
+| Docker Engine API | 通过 `/var/run/docker.sock` 调 HTTP 接口，不依赖 docker CLI | Apache-2.0 |
+| `ghcr.io/home-assistant/*-base-python` | 镜像基础层 | Apache-2.0（含 Alpine 等组件各自许可） |
+| `actions/checkout`、`docker/*-action` | CI 构建与推送 | MIT / Apache-2.0 |
+| Docker Hub 镜像源（daocloud、1ms.run 等） | 用户在面板里自行增删的**公共服务**，本项目不打包、不代理其内容 | 各自服务条款 |
+
+以上 SPDX 标识均取自各仓库的 `LICENSE`（可用 GitHub API `/repos/<owner>/<repo>` 的
+`license.spdx_id` 复核）。它们都是宽松许可，与本项目的 MIT 兼容。
+
+顺带说明**为什么内核不在镜像里**：mihomo 是独立进程、通过本地端口调用，本身也不是链接关系；
+放到运行时下载主要是为了让用户能自选版本、走自己的 GitHub 加速源，以及不必每次改内核都重建镜像
+——不是许可上的限制。
+
+**设计上的参考（不含代码搬运）**：
+
+- HAOS 上「`/etc` 只读 → 把真配置放到可写位置，再 bind mount 覆盖到 `/etc/docker/daemon.json`」
+  的社区通行做法；
+- Supervisor 的 apps 模型（ingress 面板、`host_pid`、`docker_api`、watchdog 的触发条件）；
+- Docker 官方文档里 `registry-mirrors` / `proxies` 的语义，以及哪些配置项支持 SIGHUP 热加载。
+
+排错文档里引用了 Supervisor 源码片段（`supervisor/docker/app.py`、`supervisor/apps/app.py`）
+作为**说明性引用**，用于解释"保护模式/看门狗为什么这样表现"，未复制进本项目。
+
 ## 免责声明
 
 本插件只做网络加速/代理，用于改善镜像拉取速度与可达性，不绕过任何付费或许可限制。
