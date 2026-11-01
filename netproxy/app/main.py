@@ -20,7 +20,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 from . import (cache, daemonconf, dockerapi, health, hostops, jobs, mihomo,
-               modes, settings, supervisor_api, wg)
+               modes, settings, supervisor_api, traffic, wg)
 from .logbus import LOG, log
 from .version import VERSION
 
@@ -272,6 +272,15 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/self-heal" and method == "POST":
             return self._json({"job": jobs.submit("self-heal", _do_self_heal)})
+
+        if path == "/api/traffic" and method == "GET":
+            window = (q.get("window") or ["session"])[0]
+            meter = traffic.start()
+            return self._json(meter.summary("today" if window == "today" else "session"))
+
+        if path == "/api/traffic/reset" and method == "POST":
+            traffic.start().reset()
+            return self._json({"ok": True})
 
         if path == "/api/wg/parse" and method == "POST":
             body = self._body()
@@ -545,6 +554,7 @@ def main() -> None:
         log(f"开机自动落地异常：{type(e).__name__}: {e}", "error", "boot")
 
     health.Watchdog().start()
+    traffic.start()
 
     srv = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
     srv.daemon_threads = True

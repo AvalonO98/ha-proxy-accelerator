@@ -32,6 +32,14 @@ const I18N = {
     mirror_hc: "应用前探测镜像源（剔除死源、最快的排前面）",
     wd_off: "Supervisor 的「看门狗」还没打开：插件进程崩溃后不会被自动拉起（会一直停在 error 状态）。请在插件页面打开「看门狗」开关 —— 插件自己没有权限改这个设置。",
     mirrors_picked: "本次选用的镜像源",
+    nav_settings: "设置", nav_traffic: "流量统计",
+    t_title: "流量统计", t_up: "上行", t_down: "下行", t_conns: "连接数",
+    t_win_session: "本次运行", t_win_today: "今日", t_reset: "清零",
+    t_by_app: "按应用（进程 / 容器）", t_by_target: "按目标（镜像源 / registry / 域名）",
+    t_by_chain: "按出口（直连 / 代理节点）", t_daily: "近 7 天总量",
+    t_src: "数据来源", t_mihomo: "mihomo 连接（可按应用/目标/出口归因）",
+    t_docker: "Docker 容器（仅总量）", t_off: "不可用", t_no_data: "（暂无数据）",
+    t_reset_confirm: "清零「本次运行」的统计？近 7 天日均值会保留。",
     btn_apply: "应用并生效", btn_save: "仅保存", btn_install_kernel: "安装/更新内核",
     btn_kernel_restart: "重启内核", btn_rollback: "回滚到应用前",
     btn_test: "检测连通性（直连 vs 代理）", btn_pull: "实测拉取镜像",
@@ -82,6 +90,14 @@ const I18N = {
     mirror_hc: "Probe mirrors before applying (drop dead ones, fastest first)",
     wd_off: "Supervisor's watchdog is off: if this add-on crashes it will not be restarted and stays in error state. Turn on the Watchdog switch on the add-on page — the add-on itself is not allowed to change that setting.",
     mirrors_picked: "Mirrors used this time",
+    nav_settings: "Settings", nav_traffic: "Traffic",
+    t_title: "Traffic", t_up: "Upload", t_down: "Download", t_conns: "Connections",
+    t_win_session: "This run", t_win_today: "Today", t_reset: "Reset",
+    t_by_app: "By app (process / container)", t_by_target: "By target (mirror / registry / host)",
+    t_by_chain: "By egress (direct / proxy node)", t_daily: "Last 7 days",
+    t_src: "Sources", t_mihomo: "mihomo connections (attributable)",
+    t_docker: "Docker containers (totals only)", t_off: "unavailable", t_no_data: "(no data)",
+    t_reset_confirm: "Reset the \"this run\" counters? Daily totals are kept.",
     btn_apply: "Apply & activate", btn_save: "Save only", btn_install_kernel: "Install/update kernel",
     btn_kernel_restart: "Restart kernel", btn_rollback: "Roll back to pre-apply",
     btn_test: "Test connectivity (direct vs proxy)", btn_pull: "Test image pull",
@@ -507,6 +523,79 @@ async function selfHeal() {
   try { await api("api/self-heal", {}); } catch (e) { /* 插件会立刻重启，请求中断属预期 */ }
   setTimeout(() => location.reload(), 12000);
 }
+
+/* ------------------------------ 流量统计页 ------------------------------ */
+let VIEW = "settings", TRAFFIC_WIN = "session";
+
+function fmtBytes(n) {
+  n = Number(n) || 0;
+  const u = ["B", "KB", "MB", "GB", "TB"];
+  let i = 0;
+  while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+  return (i === 0 ? n.toFixed(0) : n.toFixed(n >= 100 ? 0 : 1)) + " " + u[i];
+}
+
+function showView(v) {
+  VIEW = v;
+  $("view-settings").classList.toggle("active", v === "settings");
+  $("view-traffic").classList.toggle("active", v === "traffic");
+  $("tabSettings").classList.toggle("active", v === "settings");
+  $("tabTraffic").classList.toggle("active", v === "traffic");
+  if (v === "traffic") loadTraffic();
+}
+
+function tRows(list, showKind) {
+  if (!list || !list.length) return `<div class="row"><span class="sub">${T("t_no_data")}</span></div>`;
+  return list.map((x) => `<div class="row"><span class="n">${esc(x.name)}`
+    + (showKind && x.kind ? `<br><span class="sub">${esc(x.kind)}</span>` : "")
+    + `</span><span class="b">↓${fmtBytes(x.down)} · ↑${fmtBytes(x.up)}</span></div>`).join("");
+}
+
+function renderTraffic(d) {
+  const t = d.total || {};
+  $("tUp").textContent = fmtBytes(t.up);
+  $("tDown").textContent = fmtBytes(t.down);
+  $("tConns").textContent = t.conns || 0;
+  $("tApps").innerHTML = tRows(d.apps, false);
+  $("tTargets").innerHTML = tRows(d.targets, true);
+  $("tChains").innerHTML = tRows(d.chains, false);
+
+  const src = d.sources || {};
+  const tag = (ok, label) => ok ? esc(label) : `<span class="v-bad">${esc(label)} — ${T("t_off")}</span>`;
+  $("tSource").innerHTML = `${T("t_src")}: ${tag(src.mihomo, T("t_mihomo"))} · ${tag(src.docker, T("t_docker"))}`;
+  $("tNote").textContent = d.note || "";
+
+  const days = Object.entries(d.daily_total || {});
+  $("tDaily").innerHTML = days.length
+    ? days.map(([k, v]) => `<div class="row"><span class="n">${esc(k)}</span><span class="b">${fmtBytes(v)}</span></div>`).join("")
+    : `<div class="row"><span class="sub">${T("t_no_data")}</span></div>`;
+}
+
+async function loadTraffic() {
+  try {
+    renderTraffic(await api("api/traffic?window=" + TRAFFIC_WIN));
+  } catch (e) {
+    $("tNote").textContent = e.message;
+  }
+}
+
+$("tabSettings").onclick = () => showView("settings");
+$("tabTraffic").onclick = () => showView("traffic");
+$("tWinSession").onclick = () => {
+  TRAFFIC_WIN = "session";
+  $("tWinSession").classList.add("active"); $("tWinToday").classList.remove("active");
+  loadTraffic();
+};
+$("tWinToday").onclick = () => {
+  TRAFFIC_WIN = "today";
+  $("tWinToday").classList.add("active"); $("tWinSession").classList.remove("active");
+  loadTraffic();
+};
+$("tReset").onclick = async () => {
+  if (!confirm(T("t_reset_confirm"))) return;
+  try { await api("api/traffic/reset", {}); await loadTraffic(); } catch (e) { alert(e.message); }
+};
+setInterval(() => { if (VIEW === "traffic" && !document.hidden) loadTraffic(); }, 10000);
 
 applyI18n();
 bind();

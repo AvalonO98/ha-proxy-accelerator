@@ -89,3 +89,15 @@ footer{color:var(--muted);font-size:12px;text-align:center;margin-top:20px}
 .noproxy{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;color:var(--muted);
   word-break:break-all;max-height:120px;overflow:auto;margin-top:6px;
   border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+
+/* 页签（设置 / 流量统计） */
+.tabs{display:flex;gap:6px;margin-bottom:12px}
+.tab{padding:6px 14px;border-radius:8px 8px 0 0;border:1px solid var(--line);border-bottom:none;
+  background:transparent;color:var(--muted);font-size:13px}
+.tab.active{background:var(--card);color:var(--accent);font-weight:600}
+.view{display:none}
+.view.active{display:block}
+/* 流量页：名称 + 数值两列，数值右对齐不换行 */
+.list .row .n{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:60%}
+.list .row .b{font-family:ui-monospace,Menlo,Consolas,monospace;white-space:nowrap;color:var(--fg)}
+.list .row .sub{color:var(--muted);font-size:11px}

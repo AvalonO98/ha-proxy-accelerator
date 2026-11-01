@@ -29,6 +29,13 @@
 
   <div id="banners"></div>
 
+  <nav class="tabs">
+    <button class="tab active" id="tabSettings" data-i18n="nav_settings">设置</button>
+    <button class="tab" id="tabTraffic" data-i18n="nav_traffic">流量统计</button>
+  </nav>
+
+  <div id="view-settings" class="view active">
+
   <section class="card">
     <div class="card-head">
       <h2 data-i18n="sec_mode">1 · 选择代理方式</h2>
@@ -205,6 +212,46 @@
       <pre id="rawJson" class="log"></pre>
     </details>
   </section>
+
+  </div><!-- /view-settings -->
+
+  <div id="view-traffic" class="view">
+    <section class="card">
+      <div class="card-head">
+        <h2 data-i18n="t_title">流量统计</h2>
+        <div class="chips">
+          <button class="chip tab active" id="tWinSession" data-i18n="t_win_session">本次运行</button>
+          <button class="chip tab" id="tWinToday" data-i18n="t_win_today">今日</button>
+          <button class="chip" id="tReset" data-i18n="t_reset">清零</button>
+        </div>
+      </div>
+      <div class="grid3">
+        <div class="kv"><div class="k" data-i18n="t_up">上行</div><div class="v" id="tUp">—</div></div>
+        <div class="kv"><div class="k" data-i18n="t_down">下行</div><div class="v" id="tDown">—</div></div>
+        <div class="kv"><div class="k" data-i18n="t_conns">连接数</div><div class="v" id="tConns">—</div></div>
+      </div>
+      <div class="hint" id="tSource"></div>
+      <div class="hint warn" id="tNote"></div>
+
+      <div class="grid2" style="margin-top:14px">
+        <div>
+          <h3 data-i18n="t_by_app">按应用（进程 / 容器）</h3>
+          <div class="list" id="tApps"></div>
+        </div>
+        <div>
+          <h3 data-i18n="t_by_target">按目标（镜像源 / registry / 域名）</h3>
+          <div class="list" id="tTargets"></div>
+        </div>
+      </div>
+      <h3 data-i18n="t_by_chain">按出口（直连 / 代理节点）</h3>
+      <div class="list" id="tChains"></div>
+
+      <details class="adv">
+        <summary data-i18n="t_daily">近 7 天总量</summary>
+        <div class="list" id="tDaily"></div>
+      </details>
+    </section>
+  </div><!-- /view-traffic -->
 
   <footer>
     <span data-i18n="footer">

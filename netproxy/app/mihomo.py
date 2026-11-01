@@ -403,6 +403,8 @@ def generate_config(cfg: dict) -> tuple:
         "ipv6: false",
         "unified-delay: true",
         "tcp-concurrent: true",
+        # 流量统计要按"应用"归因，必须让内核把连接对应的进程名解析出来
+        'find-process-mode: "strict"',
         f'external-controller: "127.0.0.1:{CTRL_PORT}"',
         "dns:",
         "  enable: true",

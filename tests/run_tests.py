@@ -24,6 +24,7 @@ MODULES = [
     "test_cache",
     "test_app",
     "test_mirror_health",
+    "test_traffic",
 ]
 
 
