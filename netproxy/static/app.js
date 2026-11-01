@@ -282,8 +282,14 @@ function render() {
     ar ? (ar.ok ? "v-ok" : "v-bad") : ""));
   $("verifyGrid").innerHTML = g.join("");
 
-  // NoProxy 提示
-  $("applyHint").innerHTML = `<div class="hint">NoProxy: ${esc((S.no_proxy || "").slice(0, 260))}</div>`;
+  // NoProxy：一条没有空格的长字符串，直接平铺会把卡片撑破；折叠起来 + 允许任意处换行。
+  // 注意不要再写进 #applyHint —— 那是任务结果的容器，每 5 秒被覆盖一次，
+  // 用户根本看不到"已生效 / 选用了哪些镜像源"。
+  const nps = String(S.no_proxy || "").split(",").filter((x) => x.trim());
+  $("noProxy").innerHTML = nps.length
+    ? `<details class="adv"><summary>NoProxy（${nps.length} 项：这些目标直连，不走代理）</summary>`
+      + `<div class="noproxy">${esc(nps.join(", "))}</div></details>`
+    : "";
 
   // 历史与备份
   $("hist").innerHTML = (S.history || []).slice(0, 20).map((h) =>
