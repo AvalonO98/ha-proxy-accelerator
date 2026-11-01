@@ -1,5 +1,12 @@
 # 变更记录
 
+## 0.1.18
+
+**侧边栏图标修复**
+
+- `panel_icon: mdi:shield-network` 里的 `shield-network` **在 MDI 7 中并不存在**（CDN 上该文件
+  404），前端拿不到图标就渲染成空白 —— 侧边栏那一行只剩文字。改为 `mdi:swap-horizontal`。
+
 ## 0.1.17
 
 **面板排版：NoProxy 撑破卡片 + 任务结果活不过 5 秒**

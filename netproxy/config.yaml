@@ -1,5 +1,5 @@
 name: "Net Proxy (网络代理)"
-version: "0.1.17"
+version: "0.1.18"
 slug: "netproxy"
 description: >-
   网络代理与镜像加速面板：总开关 + 三种代理方式（Docker 加速镜像 / 上游 HTTP-SOCKS5 代理与订阅 / 内置
@@ -20,7 +20,7 @@ ingress: true
 ingress_port: 8099
 ingress_entry: /
 panel_admin: true
-panel_icon: mdi:shield-network
+panel_icon: mdi:swap-horizontal   # 必须是真实存在的 MDI 名（shield-network 在 MDI 7 里已不存在，侧边栏会显示空白）
 panel_title: "网络代理"
 # 需要操作宿主机的 dockerd 配置，所以必须进入宿主网络/PID 命名空间
 host_network: true
