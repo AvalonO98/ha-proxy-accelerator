@@ -81,10 +81,13 @@ def test_mask_hides_secrets():
     m = settings.mask({
         "upstream": {"password": "supersecret", "url": "http://x"},
         "wireguard": {"config": "PrivateKey = abc"},
+        "subscription": {"url": "https://sub.example.com/api/v1?token=abc123"},
     })
     assert "supersecret" not in str(m)
     assert "***" in m["upstream"]["password"]
     assert "***" in m["wireguard"]["config"]
+    assert "***" in m["subscription"]["url"]
+    assert "token=abc123" not in str(m)
     assert m["upstream"]["url"] == "http://x"
 
 

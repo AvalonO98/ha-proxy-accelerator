@@ -1,6 +1,6 @@
 # Net Proxy · HA 网络代理插件
 
-_维护者 AvalonO98 · MIT · 整个项目由 **AI 生成**（DeepSeek-V4-Flash → DeepSeek-V4.1-Flash）_
+_维护者 AvalonO98 · MIT · 整个项目由 **AI 生成**（DeepSeek-V4-Flash → DeepSeek-V4.1-Flash，运行于 DeepSeek Harness）_
 
 给 Home Assistant（HAOS / Supervised）用的网络代理与镜像加速 Add-on：
 
@@ -153,7 +153,7 @@ python tests/run_tests.py     # 无需 pytest / 第三方依赖
   | 项目起始 → `0.1.12`（2026-09-03 起） | **DeepSeek-V4-Flash**（V4 Flash，2026-07-31 正式版） | `0.1.0` – `0.1.12` |
   | `0.1.13` → `0.1.20`（2026-11-01/02） | **DeepSeek-V4.1-Flash**（2026-09-10 发布） | `0.1.13` – `0.1.20` |
 
-  两者都运行在 WorkBuddy 编程助手环境里（DeepSeek 官方合作伙伴）。需要说明的是这
+  两者都运行在 DeepSeek Harness 环境里。需要说明的是这
   **不是"补全片段"式的辅助**：架构设计、后端与前端编码、测试用例、GitHub Actions 构建流水线，
   以及真机（HAOS 18.3 / Supervisor 2026.10 / docker 29.7.2）上的验证、排错与回归，全部由 AI 完成。
   模型换代的时间点可以从提交历史对上：首个提交是 2026-09-03，早于 V4.1-Flash 的发布日。

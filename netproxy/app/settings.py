@@ -136,6 +136,12 @@ def _write_json(path: Path, obj) -> None:
         json.dump(obj, f, ensure_ascii=False, indent=2)
         f.flush()
         os.fsync(f.fileno())
+    # config.json / state.json 里可能含上游密码、订阅 token、WireGuard 私钥，
+    # 收紧为仅属主可读写（与 api_token 一致），避免宿主机上被其他进程读到。
+    try:
+        os.chmod(tmp, 0o600)
+    except OSError:
+        pass
     os.replace(tmp, path)
 
 
@@ -215,7 +221,7 @@ def api_token() -> str:
         return t
 
 
-SECRET_PATHS = (("upstream", "password"), ("wireguard", "config"))
+SECRET_PATHS = (("upstream", "password"), ("wireguard", "config"), ("subscription", "url"))
 
 
 def mask(cfg: dict) -> dict:
