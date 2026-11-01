@@ -35,7 +35,7 @@ configuration:
       name: Upstream type
     url:
       name: Upstream URL
-      description: "e.g. http://192.168.1.10:7890 or socks5://user:pass@192.168.1.10:1080"
+      description: "e.g. http://192.0.2.10:7890 or socks5://user:pass@192.0.2.10:1080"
     username:
       name: Upstream username
     password:

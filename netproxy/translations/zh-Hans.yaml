@@ -32,7 +32,7 @@ configuration:
       name: 上游代理类型
     url:
       name: 上游代理地址
-      description: 例如 http://192.168.1.10:7890 或 socks5://用户名:密码@192.168.1.10:1080
+      description: 例如 http://192.0.2.10:7890 或 socks5://用户名:密码@192.0.2.10:1080
     username:
       name: 上游代理用户名
     password:

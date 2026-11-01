@@ -64,7 +64,7 @@ Supervisor ──► dockerd ──► ghcr.io / registry-1.docker.io
 - 插件内置 **mihomo** 内核，在 `127.0.0.1:7890` 提供本地 HTTP+SOCKS5 混合入口；
 - 把 dockerd 的 `proxies` 指向它 → **所有 registry 都走代理**（含 ghcr.io）；
 - 上游可以填：
-  - `http://192.168.1.10:7890`、`socks5://192.168.1.10:1080`
+  - `http://192.0.2.10:7890`、`socks5://192.0.2.10:1080`
   - 带认证：面板里分别填用户名/密码；或直接写进 URL（`socks5://user:pass@host:1080`），
     两种写法插件都会识别；
   - Clash/mihomo 订阅链接（内核以 proxy-provider 方式拉取）；
